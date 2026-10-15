@@ -35,3 +35,5 @@ __pycache__/
 *.bak_*
 Thumbs.db
 .DS_Store
+uv.lock
+.venv/
