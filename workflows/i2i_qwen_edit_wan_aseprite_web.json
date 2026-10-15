@@ -3103,7 +3103,8 @@
         true,
         false,
         1.4,
-        8
+        8,
+        false
       ],
       "title": "【阶段 1B】骨盆局部羽化遮罩 (size 1.4, feather 8)"
     },

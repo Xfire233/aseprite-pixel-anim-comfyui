@@ -1754,10 +1754,10 @@ class AsepritePoseRegionMask:
                 "pose_kps": ("POSE_KEYPOINT",),
                 "pelvis": ("BOOLEAN", {"default": True}),
                 "chest": ("BOOLEAN", {"default": False}),
-                "hands": ("BOOLEAN", {"default": False, "tooltip": "在手腕处添加重绘羽化遮罩，允许 Anima 修复错位或畸变的手部动作"}),
                 "size": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05,
                                    "tooltip": "Scales every region ellipse"}),
                 "feather": ("INT", {"default": 12, "min": 0, "max": 64}),
+                "hands": ("BOOLEAN", {"default": False, "tooltip": "在手腕处添加重绘羽化遮罩，允许 Anima 修复错位或畸变的手部动作"}),
             },
             "optional": {
                 "action_prompt": ("STRING", {"forceInput": True, "tooltip": "接导演或用户的提示词，自动根据动作激活胸部与手部重绘遮罩"}),
@@ -1769,7 +1769,7 @@ class AsepritePoseRegionMask:
     FUNCTION = "build"
     CATEGORY = "pixel_art/aseprite"
 
-    def build(self, pose_kps, pelvis=True, chest=False, hands=False, size=1.0, feather=8, action_prompt=""):
+    def build(self, pose_kps, pelvis=True, chest=False, size=1.0, feather=8, hands=False, action_prompt=""):
         frame = pose_kps[0]
         W, H = int(frame["canvas_width"]), int(frame["canvas_height"])
         if action_prompt:
