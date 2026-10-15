@@ -2304,7 +2304,8 @@
           "type": "STRING",
           "links": [
             5,
-            63
+            63,
+            93
           ]
         },
         {
@@ -3078,6 +3079,11 @@
           "name": "pose_kps",
           "type": "POSE_KEYPOINT",
           "link": 60
+        },
+        {
+          "name": "action_prompt",
+          "type": "STRING",
+          "link": 93
         }
       ],
       "outputs": [
@@ -3785,7 +3791,8 @@
           "name": "active_pose_image",
           "type": "IMAGE",
           "links": [
-            90
+            90,
+            92
           ]
         },
         {
@@ -3802,6 +3809,33 @@
       "widgets_values": [
         "builtin_preset (使用阶段0骨骼预设库)"
       ]
+    },
+    {
+      "id": 67,
+      "type": "PreviewImage",
+      "pos": [
+        -1430,
+        560
+      ],
+      "size": [
+        320,
+        380
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 92
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -4428,6 +4462,22 @@
       33,
       3,
       "STRING"
+    ],
+    [
+      92,
+      66,
+      0,
+      67,
+      0,
+      "IMAGE"
+    ],
+    [
+      93,
+      33,
+      0,
+      47,
+      1,
+      "STRING"
     ]
   ],
   "groups": [
@@ -4437,7 +4487,7 @@
       "bounding": [
         -2030,
         -680,
-        600,
+        940,
         2200
       ],
       "color": "#2a5b84",

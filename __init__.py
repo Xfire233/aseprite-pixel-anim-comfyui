@@ -1015,8 +1015,38 @@ class AsepriteLLMPromptDirector:
                 pose_q = f"in a balanced front-view wide-legged squat with knees spread apart {hand_q}, natural 2D anime body proportions without extreme foreshortening, entire full body from head to feet inside the frame with white margins"
                 pose_a = f"1girl, solo, squatting, wide spread legs, {hand_a}, full frontal, balanced proportions"
             elif any(k in up for k in ("M字", "m字", "坐在地上", "坐姿")):
-                hand_q = "with both hands resting on the floor beside her outer hips away from her crotch"
-                hand_a = "arms at sides, hands on floor"
+                # Check if user specified custom hand actions before falling back to default floor resting hands
+                custom_hands_q = []
+                custom_hands_a = []
+                if any(k in up for k in ("揉胸", "摸胸", "托胸", "抓胸", "抚摸胸部", "放在胸前", "放在胸口")):
+                    if "左手" in up:
+                        custom_hands_q.append("left hand placed over chest fondling own breast")
+                        custom_hands_a.append("left hand on own breast, fondling own breast")
+                    elif "右手" in up:
+                        custom_hands_q.append("right hand placed over chest fondling own breast")
+                        custom_hands_a.append("right hand on own breast, fondling own breast")
+                    else:
+                        custom_hands_q.append("one hand placed over chest fondling own breast")
+                        custom_hands_a.append("hand on own breast, fondling own breast")
+
+                if any(k in up for k in ("伸入下体", "摸下体", "放在裆部", "自慰", "抠逼", "扣逼", "手指插入", "触碰私处")):
+                    if "右手" in up:
+                        custom_hands_q.append("right hand at pelvis center touching herself")
+                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+                    elif "左手" in up:
+                        custom_hands_q.append("left hand at pelvis center touching herself")
+                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+                    else:
+                        custom_hands_q.append("one hand at pelvis center touching herself")
+                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+
+                if custom_hands_q:
+                    hand_q = f"with {', and '.join(custom_hands_q)}"
+                    hand_a = f"{', '.join(custom_hands_a)}"
+                else:
+                    hand_q = "with both hands resting on the floor beside her outer hips away from her crotch"
+                    hand_a = "arms at sides, hands on floor"
+
                 pose_q = f"sitting on the floor in an M-shaped spread-legs pose (m legs) facing forward {hand_q}, entire full body inside the frame with white margins"
                 pose_a = f"1girl, solo, sitting, sitting on floor, m legs, spread legs, knees up, {hand_a}, full frontal"
             elif any(k in up for k in ("跪", "挺胸")):
@@ -1254,23 +1284,28 @@ class AsepriteLLMPromptDirector:
         raw_tokens = [t.strip() for t in anima_pos.split(",") if t.strip()]
         anima_pos = ", ".join(dict.fromkeys(raw_tokens))
 
-        # Strip any crotch-occluding hand phrases that LLM may have generated from '双手撑在大腿上'
-        for bad_h, good_h in [
-            ("with both hands resting on her thighs", "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"),
-            ("hands resting on her thighs", "hands resting on outer knee edges away from pelvis"),
-            ("hands on own thighs", "arms spread outward, hands on outer knees"),
-            ("hands on thighs", "arms spread outward, hands on outer knees"),
-            ("grabbing own thighs", "hands on outer knees"),
-        ]:
-            anima_pos = anima_pos.replace(bad_h, good_h)
+        is_masturbating = any(k in str(user_prompt) for k in ("自慰", "摸下体", "伸入下体", "抠逼", "扣逼", "手在裆", "触摸私处", "触碰私处")) or ("fingering" in anima_pos) or ("masturbation" in anima_pos)
+        if not is_masturbating:
+            # Only strip crotch-occluding hands for pure standing/idle poses where crotch should stay visible
+            for bad_h, good_h in [
+                ("with both hands resting on her thighs", "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"),
+                ("hands resting on her thighs", "hands resting on outer knee edges away from pelvis"),
+                ("hands on own thighs", "arms spread outward, hands on outer knees"),
+                ("hands on thighs", "arms spread outward, hands on outer knees"),
+                ("grabbing own thighs", "hands on outer knees"),
+            ]:
+                anima_pos = anima_pos.replace(bad_h, good_h)
+
         anima_neg = _expand(parsed.get("anima_negative", ""))
         if is_petite and "large breasts" not in anima_neg.lower():
             anima_neg = f"large breasts, huge breasts, {anima_neg}"
         if is_duo:
             anima_neg = re.sub(r"\b(multiple girls|2girls)\b\s*,?", "", anima_neg).strip(" ,")
-        if "hands covering crotch" not in anima_neg:
+        if is_masturbating:
+            # Purge any negative tokens that forbid hand between legs!
+            anima_neg = re.sub(r"\b(hands between legs|hands covering crotch|hands on inner thighs)\b\s*,?", "", anima_neg, flags=re.IGNORECASE).strip(" ,")
+        elif "hands covering crotch" not in anima_neg:
             anima_neg = f"{anima_neg}, hands between legs, hands covering crotch, hands on inner thighs"
-        wan_pos = _expand(parsed.get("wan_positive", ""))
         if not wan_pos:
             wan_pos = f"anime style, {macros['wan_subject']} on a plain white background, {pose_w_local}, static camera, fixed composition, full body, clean 2D anime illustration"
         wan_neg = _expand(parsed.get("wan_negative", ""))
@@ -1719,10 +1754,14 @@ class AsepritePoseRegionMask:
                 "pose_kps": ("POSE_KEYPOINT",),
                 "pelvis": ("BOOLEAN", {"default": True}),
                 "chest": ("BOOLEAN", {"default": False}),
+                "hands": ("BOOLEAN", {"default": False, "tooltip": "在手腕处添加重绘羽化遮罩，允许 Anima 修复错位或畸变的手部动作"}),
                 "size": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05,
                                    "tooltip": "Scales every region ellipse"}),
                 "feather": ("INT", {"default": 12, "min": 0, "max": 64}),
             },
+            "optional": {
+                "action_prompt": ("STRING", {"forceInput": True, "tooltip": "接导演或用户的提示词，自动根据动作激活胸部与手部重绘遮罩"}),
+            }
         }
 
     RETURN_TYPES = ("MASK",)
@@ -1730,9 +1769,15 @@ class AsepritePoseRegionMask:
     FUNCTION = "build"
     CATEGORY = "pixel_art/aseprite"
 
-    def build(self, pose_kps, pelvis=True, chest=False, size=1.0, feather=8):
+    def build(self, pose_kps, pelvis=True, chest=False, hands=False, size=1.0, feather=8, action_prompt=""):
         frame = pose_kps[0]
         W, H = int(frame["canvas_width"]), int(frame["canvas_height"])
+        if action_prompt:
+            p_low = str(action_prompt).lower()
+            if any(k in p_low for k in ("揉胸", "摸胸", "托胸", "抓胸", "露胸", "上身裸", "乳头")):
+                chest = True
+            if any(k in p_low for k in ("揉胸", "摸胸", "自慰", "摸下体", "抠逼", "伸入下体", "手在裆")):
+                hands = True
         mask = Image.new("L", (W, H), 0)
         draw = ImageDraw.Draw(mask)
         for person in frame.get("people", []):
@@ -1765,6 +1810,13 @@ class AsepritePoseRegionMask:
                 sho_w = float(np.linalg.norm(r_sho - l_sho)) if (r_sho is not None and l_sho is not None) else 1.6 * hip_w
                 rx, ry = 0.55 * sho_w * size, 0.24 * torso * size
                 draw.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=255)
+            if hands:
+                r_wri, l_wri = pt(4), pt(7)
+                hr = 0.20 * torso * size
+                if r_wri is not None:
+                    draw.ellipse([r_wri[0] - hr, r_wri[1] - hr, r_wri[0] + hr, r_wri[1] + hr], fill=255)
+                if l_wri is not None:
+                    draw.ellipse([l_wri[0] - hr, l_wri[1] - hr, l_wri[0] + hr, l_wri[1] + hr], fill=255)
         if feather > 0:
             mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
         return (torch.from_numpy(np.array(mask).astype(np.float32) / 255.0).unsqueeze(0),)
