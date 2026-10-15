@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-aseprite-pixel-anim"
+description = "Reference image -> pose edit (Qwen-Image-Edit) -> Wan2.2 motion -> pixelized .aseprite animation, all local."
+version = "0.3.0"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+  "onnxruntime-gpu>=1.17; platform_system != 'Darwin'",
+  "onnxruntime>=1.17; platform_system == 'Darwin'",
+  "transformers>=4.40",
+]
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Aseprite Pixel Animation Pipeline"
+Icon = ""

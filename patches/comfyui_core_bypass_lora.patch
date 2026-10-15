@@ -1,0 +1,29 @@
+diff --git a/comfy/model_patcher.py b/comfy/model_patcher.py
+index 8472b4a4..4a8f2f02 100644
+--- a/comfy/model_patcher.py
++++ b/comfy/model_patcher.py
+@@ -1450,8 +1450,8 @@ class ModelPatcher:
+     def eject_model(self):
+         if not self.is_injected:
+             return
+-        for injections in self.injections.values():
+-            for inj in injections:
++        for injections in reversed(list(self.injections.values())):
++            for inj in reversed(injections):
+                 inj.eject(self)
+         self.is_injected = False
+         for callback in self.get_all_callbacks(CallbacksMP.ON_EJECT_MODEL):
+diff --git a/comfy/sd.py b/comfy/sd.py
+index 2f106a7b..c6326496 100644
+--- a/comfy/sd.py
++++ b/comfy/sd.py
+@@ -200,7 +200,8 @@ def load_bypass_lora_for_models(model, clip, lora, strength_model, strength_clip
+         injections = manager.create_injections(new_modelpatcher.model)
+ 
+         if manager.get_hook_count() > 0:
+-            new_modelpatcher.set_injections("bypass_lora", injections)
++            inj_key = f"bypass_lora_{len(new_modelpatcher.injections)}"
++            new_modelpatcher.set_injections(inj_key, injections)
+     else:
+         new_modelpatcher = None
+ 

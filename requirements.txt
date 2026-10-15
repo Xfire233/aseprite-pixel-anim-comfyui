@@ -1,0 +1,4 @@
+# Installed into ComfyUI's own Python by scripts/install.py (torch / torchvision / aiohttp / Pillow / numpy come with ComfyUI).
+onnxruntime-gpu>=1.17 ; platform_system != "Darwin"
+onnxruntime>=1.17 ; platform_system == "Darwin"
+transformers>=4.40

@@ -1,0 +1,37 @@
+# --- Local generation artefacts (large, personal, regenerable) ---
+work/
+output/
+input/
+*.aseprite
+*.gif
+*.mp4
+
+# Pose library (poses/nsfw_library) is committed: ~400 KB, needed by AsepriteNSFWPoseLibrary at runtime.
+
+# --- Secrets / per-machine config ---
+.env
+*.secret
+.llm_models_cache.json
+
+# --- Model weights never belong in git ---
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# --- Personal character cards (copy scripts/charcard.example.json to start your own) ---
+# --- Personal character cards (scripts/charcard.example.json is the committed template) ---
+scripts/charcard_*.json
+scripts/charcard.json
+!scripts/charcard.example.json
+# --- Python / OS ---
+__pycache__/
+*.pyc
+.venv/
+*.bak
+*.bak_*
+Thumbs.db
+.DS_Store

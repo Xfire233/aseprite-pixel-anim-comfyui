@@ -1,0 +1,1666 @@
+"""ComfyUI custom node wrapping scripts/pixelize.py + assemble.lua + validate_loop.py.
+
+Takes IMAGE frames directly from VAEDecode/VAEDecodeTiled, runs the deterministic
+pixelization + shared-palette + temporal alpha consensus + Aseprite CLI (.aseprite / .gif / _sheet.png)
+pipeline, validates loop coherence, and displays the animated GIF + zoom sheet right inside the node.
+"""
+import base64
+import gc
+import io
+import glob
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.request
+
+import numpy as np
+import torch
+from PIL import Image, ImageDraw, ImageFilter
+from aiohttp import web
+import comfy.sample
+import comfy.samplers
+import comfy.model_management
+import comfy.utils
+import folder_paths
+import math
+import node_helpers
+import server
+# This repository IS the custom node: clone it into ComfyUI/custom_nodes/ and scripts/, poses/, work/ sit next to this file.
+PROJECT_ROOT = os.environ.get("ASEPRITE_WF_ROOT", os.path.dirname(os.path.abspath(__file__)))
+PIXELIZE_PY = os.path.join(PROJECT_ROOT, "scripts", "pixelize.py")
+VALIDATE_PY = os.path.join(PROJECT_ROOT, "scripts", "validate_loop.py")
+SECRET_KEY_FILE = os.path.join(PROJECT_ROOT, "work", ".llm_api_key.secret")
+MODELS_CACHE_FILE = os.path.join(PROJECT_ROOT, "work", ".llm_models_cache.json")
+POSE_LIB_INDEX = os.path.join(PROJECT_ROOT, "poses", "nsfw_library", "index.json")
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+# No endpoint is baked in: fill base_url in the node (or env LLM_BASE_URL), then "fetch models" to populate this list.
+DEFAULT_LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
+DEFAULT_MODELS = [os.environ.get("LLM_MODEL", "")] if os.environ.get("LLM_MODEL") else ["(先填 base_url 再点获取模型)"]
+
+DEFAULT_SYSTEM_PROMPT = """你是一个专精于 Anima (Danbooru Tag 图像模型) 与 Wan2.2 I2V (图生视频动作模型) 的提示词编译器。
+角色固定外观与服装标签已预置为宏 `{{CHARCARD_ANIMA_TAGS}}`，固定负面冲突词已预置为宏 `{{CHARCARD_NEG_TAGS}}`，角色英文主语已预置为宏 `{{CHARCARD_WAN_SUBJECT}}`。
+请根据用户输入的【中文姿势与动作描述】，将其中的姿势、视角、表情与动作轨迹编译为英文，并严格以 JSON 格式输出以下 4 个字段（保留宏名原样输出，由本地后处理器自动展开，不要输出任何额外解释）：
+{
+  "anima_positive": "masterpiece, best quality, score_9, score_8, newest, {{CHARCARD_ANIMA_TAGS}}, <根据用户描述转换的姿势/肢体位置/表情/视角Danbooru英文标签>, full body, white background, simple background, character in center with margins around body",
+  "anima_negative": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, censored, mosaic censoring, bar censor, multiple girls, 2girls, cropped, out of frame, bad anatomy, extra limbs, {{CHARCARD_NEG_TAGS}}",
+  "wan_positive": "anime style, {{CHARCARD_WAN_SUBJECT}} <用英文自然语言描述当前所处姿势与表情> on a plain white background, <用英文自然语言描述单程半周期柔和运动轨迹，不要堆砌tag>, static camera, fixed composition, full body, clean 2D anime illustration, smooth subtle motion",
+  "wan_negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"
+}"""
+
+_PROMPT_CACHE = {}
+
+_ACTIVE_POSE_ID = "solo_m_legs_sit"
+_ACTIVE_USER_PROMPT = ""
+
+
+_BONE_SEGMENTS = [
+    ("nose", "neck"), ("r_eye", "l_eye"), ("r_ear", "l_ear"),
+    ("neck", "r_sho"), ("neck", "l_sho"),
+    ("r_sho", "r_hip"), ("l_sho", "l_hip"), ("r_hip", "l_hip"),
+    ("r_sho", "r_elb"), ("r_elb", "r_wri"),
+    ("l_sho", "l_elb"), ("l_elb", "l_wri"),
+    ("r_hip", "r_kne"), ("r_kne", "r_ank"),
+    ("l_hip", "l_kne"), ("l_kne", "l_ank"),
+]
+
+
+def _warp_image_by_pose_kps(img_rgb: np.ndarray, start_kps_in, peak_kps_in, t: float = 1.0, motion_scale: float = 1.15) -> np.ndarray:
+    """Articulated Bone-Segment Skeletal Skinning for 1..N characters (solo_* and duo_*).
+
+    Locks head, hair, face, and upper torso as a 100% rigid body (zero vertical squishing!) while
+    articulating thigh, shin, and arm bone segments (e.g. knees swinging wide outward on squat/riding).
+    """
+    H, W = img_rgb.shape[:2]
+    fg = img_rgb.min(axis=2) < 242
+    ys, xs = np.where(fg)
+    if len(ys) < 100 or not start_kps_in or not peak_kps_in or abs(t) < 1e-4:
+        return img_rgb.copy()
+
+    start_list = start_kps_in if isinstance(start_kps_in, list) else [start_kps_in]
+    peak_list = peak_kps_in if isinstance(peak_kps_in, list) else [peak_kps_in]
+    x0, x1 = float(xs.min()), float(xs.max())
+    y0, y1 = float(ys.min()), float(ys.max())
+    bw, bh = max(1.0, x1 - x0), max(1.0, y1 - y0)
+
+    all_sx, all_sy = [], []
+    for sk in start_list:
+        if isinstance(sk, dict):
+            for pt in sk.values():
+                all_sx.append(float(pt[0]))
+                all_sy.append(float(pt[1]))
+    if not all_sx:
+        return img_rgb.copy()
+    sxmin, sxmax = min(all_sx), max(all_sx)
+    symin, symax = min(all_sy), max(all_sy)
+    sx_span = max(0.05, sxmax - sxmin)
+    sy_span = max(0.05, symax - symin)
+
+    def map_pt(pt):
+        cx = x0 + (0.10 + 0.80 * ((float(pt[0]) - sxmin) / sx_span)) * bw
+        cy = y0 + (0.13 + 0.80 * ((float(pt[1]) - symin) / sy_span)) * bh
+        return np.array([cx, cy], dtype=np.float32)
+
+    seg_A, seg_B, disp_A, disp_B = [], [], [], []
+    for sk, pk in zip(start_list, peak_list):
+        if not isinstance(sk, dict) or not isinstance(pk, dict):
+            continue
+        sk_ext = dict(sk)
+        pk_ext = dict(pk)
+        # Virtual rigid head-crown segments above nose/ears so crown & hair never squish vertically
+        if "nose" in sk and "nose" in pk:
+            ndx = float(pk["nose"][0]) - float(sk["nose"][0])
+            ndy = float(pk["nose"][1]) - float(sk["nose"][1])
+            for ck, ox, oy in [("crown_c", 0.0, -0.11), ("crown_l", 0.10, -0.09), ("crown_r", -0.10, -0.09)]:
+                sk_ext[ck] = (float(sk["nose"][0]) + ox, float(sk["nose"][1]) + oy)
+                pk_ext[ck] = (float(sk["nose"][0]) + ox + ndx, float(sk["nose"][1]) + oy + ndy)
+        # Virtual foot-sole segments below ankles so shoes stay anchored with ankles
+        for ank_k, foot_k in [("r_ank", "r_foot"), ("l_ank", "l_foot")]:
+            if ank_k in sk and ank_k in pk:
+                adx = float(pk[ank_k][0]) - float(sk[ank_k][0])
+                ady = float(pk[ank_k][1]) - float(sk[ank_k][1])
+                sk_ext[foot_k] = (float(sk[ank_k][0]), float(sk[ank_k][1]) + 0.06)
+                pk_ext[foot_k] = (float(sk[ank_k][0]) + adx, float(sk[ank_k][1]) + 0.06 + ady)
+
+        extra_segs = [("nose", "crown_c"), ("crown_r", "crown_l"), ("r_ear", "crown_r"), ("l_ear", "crown_l"), ("r_ank", "r_foot"), ("l_ank", "l_foot")]
+        for k1, k2 in _BONE_SEGMENTS + extra_segs:
+            if k1 in sk_ext and k2 in sk_ext and k1 in pk_ext and k2 in pk_ext:
+                pA = map_pt(sk_ext[k1])
+                pB = map_pt(sk_ext[k2])
+                dA = np.array([(float(pk_ext[k1][0]) - float(sk_ext[k1][0])) * W * motion_scale * t,
+                               (float(pk_ext[k1][1]) - float(sk_ext[k1][1])) * H * motion_scale * t], dtype=np.float32)
+                dB = np.array([(float(pk_ext[k2][0]) - float(sk_ext[k2][0])) * W * motion_scale * t,
+                               (float(pk_ext[k2][1]) - float(sk_ext[k2][1])) * H * motion_scale * t], dtype=np.float32)
+                seg_A.append(pA + dA)
+                seg_B.append(pB + dB)
+                disp_A.append(dA)
+                disp_B.append(dB)
+
+    if not seg_A:
+        return img_rgb.copy()
+
+    seg_A = np.stack(seg_A, axis=0)
+    seg_B = np.stack(seg_B, axis=0)
+    disp_A = np.stack(disp_A, axis=0)
+    disp_B = np.stack(disp_B, axis=0)
+
+    gh, gw = 96, 64
+    gy, gx = np.meshgrid(np.linspace(0, H - 1, gh, dtype=np.float32), np.linspace(0, W - 1, gw, dtype=np.float32), indexing="ij")
+    P = np.stack([gx, gy], axis=-1)[:, :, None, :]
+    A = seg_A[None, None, :, :]
+    B = seg_B[None, None, :, :]
+    AB = B - A
+    AB_len2 = np.sum(AB * AB, axis=-1) + 1e-4
+    u = np.clip(np.sum((P - A) * AB, axis=-1) / AB_len2, 0.0, 1.0)
+    Q = A + u[:, :, :, None] * AB
+    dist2 = np.sum((P - Q) ** 2, axis=-1)
+
+    eps2 = (max(bw, bh) * 0.045) ** 2
+    weights = 1.0 / ((dist2 + eps2) ** 2)
+    weights /= np.sum(weights, axis=-1, keepdims=True)
+
+    seg_disp = (1.0 - u[:, :, :, None]) * disp_A[None, None, :, :] + u[:, :, :, None] * disp_B[None, None, :, :]
+    field_coarse = np.sum(weights[:, :, :, None] * seg_disp, axis=2)
+
+    dx_full = np.array(Image.fromarray(field_coarse[:, :, 0], mode="F").resize((W, H), Image.BILINEAR), dtype=np.float32)
+    dy_full = np.array(Image.fromarray(field_coarse[:, :, 1], mode="F").resize((W, H), Image.BILINEAR), dtype=np.float32)
+    # Smoothly damp horizontal displacement near the left/right canvas edges so wide twintails/knees never clip out of frame
+    edge_x = np.minimum(np.arange(W, dtype=np.float32), np.arange(W - 1, -1, -1, dtype=np.float32)) / max(1.0, 0.06 * W)
+    dx_full *= np.clip(edge_x, 0.0, 1.0)[None, :]
+
+    yy, xx = np.meshgrid(np.arange(H, dtype=np.float32), np.arange(W, dtype=np.float32), indexing="ij")
+    sx_map = np.clip(xx - dx_full, 0.0, W - 1.001)
+    sy_map = np.clip(yy - dy_full, 0.0, H - 1.001)
+    oob = (xx - dx_full < 0) | (xx - dx_full >= W - 1) | (yy - dy_full < 0) | (yy - dy_full >= H - 1)
+
+    x0_i = sx_map.astype(np.int32)
+    y0_i = sy_map.astype(np.int32)
+    x1_i = np.minimum(x0_i + 1, W - 1)
+    y1_i = np.minimum(y0_i + 1, H - 1)
+    wx = (sx_map - x0_i)[:, :, None]
+    wy = (sy_map - y0_i)[:, :, None]
+
+    im_f = img_rgb.astype(np.float32)
+    c00 = im_f[y0_i, x0_i]
+    c10 = im_f[y0_i, x1_i]
+    c01 = im_f[y1_i, x0_i]
+    c11 = im_f[y1_i, x1_i]
+    warped = (1.0 - wy) * ((1.0 - wx) * c00 + wx * c10) + wy * ((1.0 - wx) * c01 + wx * c11)
+    warped[oob] = 255.0
+    return warped.clip(0.0, 255.0).round().astype(np.uint8)
+
+def _load_pose_library() -> dict:
+    if os.path.exists(POSE_LIB_INDEX):
+        try:
+            with open(POSE_LIB_INDEX, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _get_pose_preset_choices() -> list:
+    choices = ["none (不使用预设骨骼)"]
+    lib = _load_pose_library()
+    for pid, meta in lib.items():
+        lbl = str(meta.get("label") or pid)
+        choices.append(lbl if lbl.startswith(pid) else f"{pid} ({lbl})")
+    return choices
+
+
+_CHARCARD_NONE = "none (不使用预设角色卡，自动识别参考图1外观)"
+
+
+def _get_charcard_choices() -> list:
+    """'none' (read appearance from the reference image) plus every scripts/charcard*.json on disk."""
+    choices = [_CHARCARD_NONE]
+    for p in sorted(glob.glob(os.path.join(PROJECT_ROOT, "scripts", "charcard*.json"))):
+        fn = os.path.basename(p)
+        lbl = "预设角色卡"
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+            if d.get("name"):
+                lbl = str(d["name"])
+        except Exception:
+            pass
+        choices.append(f"{fn} ({lbl})")
+    return choices
+def _resolve_api_key(raw_key: str) -> str:
+    """UI key (or name of an env var typed into the UI) > local git-ignored secret file > env LLM_API_KEY."""
+    val = (raw_key or "").strip()
+    if val and not re.match(r"^[•*\s]+$", val) and not val.startswith("(空"):
+        if val in os.environ:
+            return os.environ[val]
+        # Save newly entered key locally so it never ends up inside workflow JSON
+        os.makedirs(os.path.dirname(SECRET_KEY_FILE), exist_ok=True)
+        with open(SECRET_KEY_FILE, "w", encoding="utf-8") as f:
+            f.write(val)
+        return val
+    if os.path.exists(SECRET_KEY_FILE):
+        saved = open(SECRET_KEY_FILE, encoding="utf-8").read().strip()
+        if saved:
+            return saved
+    return os.environ.get("LLM_API_KEY", "")
+
+
+def _get_cached_models():
+    models = list(DEFAULT_MODELS)
+    if os.path.exists(MODELS_CACHE_FILE):
+        try:
+            cached = json.load(open(MODELS_CACHE_FILE, encoding="utf-8"))
+            if isinstance(cached, list) and cached:
+                for m in cached:
+                    if isinstance(m, str) and m not in models:
+                        models.append(m)
+        except Exception:
+            pass
+    return models
+
+
+@server.PromptServer.instance.routes.post("/aseprite_llm/fetch_models")
+async def fetch_llm_models(request):
+    try:
+        body = await request.json()
+        base_url = (body.get("base_url") or "").strip().rstrip("/")
+        api_key = _resolve_api_key(body.get("api_key") or "")
+        if not base_url:
+            return web.json_response({"ok": False, "error": "base_url 为空"})
+        url = f"{base_url}/models"
+        headers = {"User-Agent": "ComfyUI-AsepritePromptDirector/1.0"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        req = urllib.request.Request(url, headers=headers)
+        raw = urllib.request.urlopen(req, timeout=15).read().decode("utf-8")
+        data = json.loads(raw)
+        items = data.get("data", []) if isinstance(data, dict) else []
+        models = [it.get("id") for it in items if isinstance(it, dict) and it.get("id")]
+        if not models:
+            return web.json_response({"ok": False, "error": f"接口未返回有效模型列表: {raw[:200]}"})
+        os.makedirs(os.path.dirname(MODELS_CACHE_FILE), exist_ok=True)
+        with open(MODELS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(models, f, indent=2, ensure_ascii=False)
+        return web.json_response({"ok": True, "models": models})
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)})
+
+
+_BIREFNET_MODEL = None
+_BIREFNET_TFM = None
+
+
+def _get_birefnet_mask(pil_rgb: Image.Image) -> np.ndarray:
+    """Runs RMBG-2.0 (BiRefNet) to get an [H, W] uint8 (0..255) foreground alpha mask,
+    keeping the model on CPU when idle so it uses 0 MB of GPU VRAM during diffusion.
+    """
+    global _BIREFNET_MODEL, _BIREFNET_TFM
+    rmbg_dir = os.path.join(folder_paths.models_dir, "RMBG", "RMBG-2.0")
+    if not os.path.exists(rmbg_dir):
+        return None
+    try:
+        if _BIREFNET_MODEL is None:
+            from transformers import AutoModelForImageSegmentation
+            from torchvision import transforms
+            _BIREFNET_MODEL = AutoModelForImageSegmentation.from_pretrained(rmbg_dir, trust_remote_code=True).eval()
+            _BIREFNET_TFM = transforms.Compose([
+                transforms.Resize((1024, 1024)),
+                transforms.ToTensor(),
+                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+            ])
+        _BIREFNET_MODEL.to("cuda")
+        inp = _BIREFNET_TFM(pil_rgb.convert("RGB")).unsqueeze(0).to("cuda")
+        with torch.no_grad():
+            pred = _BIREFNET_MODEL(inp)[-1].sigmoid().cpu()[0, 0].numpy()
+        _BIREFNET_MODEL.to("cpu")
+        torch.cuda.empty_cache()
+        mask_pil = Image.fromarray((pred * 255.0).round().astype(np.uint8)).resize(pil_rgb.size, Image.BILINEAR)
+        return np.array(mask_pil)
+    except Exception as e:
+        print(f"[BiRefNet Mask Warning] {e}")
+        try:
+            if _BIREFNET_MODEL is not None:
+                _BIREFNET_MODEL.to("cpu")
+        except Exception:
+            pass
+        return None
+
+
+def _clean_bg_to_pure_white(arr_rgb: np.ndarray, mask_u8: np.ndarray) -> np.ndarray:
+    """Replaces background (mask < 165) with pure white (255,255,255) and decontaminates dark room fringes."""
+    out = arr_rgb.copy().astype(np.float32)
+    fg_core = mask_u8 >= 235
+    ref_fg = out.copy()
+    valid = fg_core.copy()
+    if valid.sum() > 50:
+        neighbors = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
+        for _ in range(8):
+            unfilled = ~valid
+            if not unfilled.any():
+                break
+            acc = np.zeros_like(out)
+            cnt = np.zeros(out.shape[:2], dtype=np.float32)
+            for dy, dx in neighbors:
+                v_s = np.roll(np.roll(valid, dy, axis=0), dx, axis=1)
+                c_s = np.roll(np.roll(ref_fg, dy, axis=0), dx, axis=1)
+                m_t = unfilled & v_s
+                acc[m_t] += c_s[m_t]
+                cnt[m_t] += 1.0
+            new_m = unfilled & (cnt > 0)
+            if not new_m.any():
+                break
+            ref_fg[new_m] = acc[new_m] / cnt[new_m, None]
+            valid |= new_m
+    alpha = np.clip((mask_u8.astype(np.float32) - 140.0) / 100.0, 0.0, 1.0)[:, :, None]
+    comp = ref_fg * alpha + 255.0 * (1.0 - alpha)
+    comp[mask_u8 >= 235] = out[mask_u8 >= 235]
+    return comp.round().clip(0, 255).astype(np.uint8)
+
+class AsepritePixelizeAssemble:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "name": ("STRING", {"default": "wan_sprite"}),
+                "canvas": ("STRING", {"default": "128x224"}),
+                "subsample": ("INT", {"default": 4, "min": 0, "max": 64, "step": 1,
+                                      "tooltip": "Number of keyframes to subsample evenly from input video frames (0 = use all frames)"}),
+                "pingpong": ("BOOLEAN", {"default": True,
+                                         "tooltip": "Mirror keyframes (1..K..2) into a closed ping-pong loop"}),
+                "consensus": (["alpha", "none", "full"], {"default": "alpha"}),
+                "colors": ("INT", {"default": 32, "min": 4, "max": 256, "step": 1}),
+                "frame_duration_ms": ("INT", {"default": 180, "min": 20, "max": 2000, "step": 10}),
+                "gif_scale": ("INT", {"default": 4, "min": 1, "max": 10, "step": 1}),
+                "tag": ("STRING", {"default": "idle_loop"}),
+            }
+        }
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        return True
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING")
+    RETURN_NAMES = ("pixel_frames", "zoom_sheet", "report")
+    FUNCTION = "execute"
+    OUTPUT_NODE = True
+    CATEGORY = "pixel_art/aseprite"
+
+    def execute(
+        self,
+        images,
+        name="wan_sprite",
+        canvas="128x224",
+        subsample=4,
+        pingpong=True,
+        consensus="alpha",
+        colors=32,
+        frame_duration_ms=180,
+        gif_scale=4,
+        tag="idle_loop",
+        **kwargs,
+    ):
+        # Self-heal if an un-refreshed browser tab sent shifted widget values from the old 13-widget schema
+        if not isinstance(name, str) or not name.strip():
+            name = "wan_sprite"
+        if not isinstance(canvas, str) or "x" not in canvas:
+            canvas = "128x224"
+        try:
+            subsample = int(subsample)
+            if not (0 <= subsample <= 64):
+                subsample = 4
+        except Exception:
+            subsample = 4
+        pingpong = bool(pingpong) if isinstance(pingpong, bool) else True
+        if not isinstance(consensus, str) or consensus not in ("alpha", "none", "full"):
+            consensus = "alpha"
+        try:
+            colors = int(colors)
+            if not (4 <= colors <= 256) or colors == 180:
+                colors = 32
+        except Exception:
+            colors = 32
+        try:
+            frame_duration_ms = int(frame_duration_ms)
+            if frame_duration_ms < 20:
+                frame_duration_ms = 180
+        except Exception:
+            frame_duration_ms = 180
+        try:
+            gif_scale = int(gif_scale)
+            if not (1 <= gif_scale <= 10):
+                gif_scale = 4
+        except Exception:
+            gif_scale = 4
+        if not isinstance(tag, str) or not tag.strip():
+            tag = "idle_loop"
+
+        safe_name = "".join(c if (c.isalnum() or c in "_-") else "_" for c in name.strip()) or "wan_sprite"
+        raw_dir = os.path.join(PROJECT_ROOT, "work", f"{safe_name}_raw")
+        work_dir = os.path.join(PROJECT_ROOT, "work", f"{safe_name}_pixel")
+        out_dir = os.path.join(folder_paths.get_output_directory(), "aseprite")
+        os.makedirs(raw_dir, exist_ok=True)
+        os.makedirs(work_dir, exist_ok=True)
+        os.makedirs(out_dir, exist_ok=True)
+        # Clean old raw/work frames so stale frame counts don't mix
+        for old_p in glob.glob(os.path.join(raw_dir, "f_*.png")) + glob.glob(os.path.join(work_dir, "frame*.png")):
+            try:
+                os.remove(old_p)
+            except OSError:
+                pass
+
+        # 1. Save incoming ComfyUI IMAGE batch [N, H, W, C] to raw_dir
+        imgs_np = (images.detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+        # Always segment frames with BiRefNet (RMBG-2.0) when available so floor shadows and border specks never leak
+        raw_paths = []
+        for idx, arr in enumerate(imgs_np, 1):
+            p = os.path.join(raw_dir, f"f_{idx:05d}_.png")
+            pil_im = Image.fromarray(arr[:, :, :3], "RGB")
+            m_u8 = _get_birefnet_mask(pil_im)
+            if m_u8 is not None and (m_u8 >= 165).sum() > 200:
+                Image.fromarray(np.dstack([arr[:, :, :3], m_u8]), "RGBA").save(p)
+            else:
+                pil_im.save(p)
+            raw_paths.append(p)
+        ase_path = os.path.join(out_dir, f"{safe_name}.aseprite")
+        gif_path = os.path.join(out_dir, f"{safe_name}.gif")
+        sheet_path = os.path.join(out_dir, f"{safe_name}_sheet.png")
+        zoom_path = os.path.join(PROJECT_ROOT, "work", f"{safe_name}_zoom.png")
+
+        # Calculate number of output frames for durations string (start->peak trajectory always ping-pongs to complete cycle)
+        use_pingpong = bool(pingpong) or (_ACTIVE_TRAJ_LATENT is not None)
+        k = subsample if (0 < subsample < len(raw_paths)) else len(raw_paths)
+        n_out = (2 * k - 2) if (use_pingpong and k >= 3) else k
+        durations_str = ",".join([str(int(frame_duration_ms))] * max(1, n_out))
+        # 2. Run scripts/pixelize.py
+        cmd_pix = [
+            sys.executable,
+            PIXELIZE_PY,
+            "--frames", *raw_paths,
+            "--canvas", canvas,
+            "--out", work_dir,
+            "--assemble", ase_path,
+            "--tag", tag,
+            "--durations", durations_str,
+            "--zoom", zoom_path,
+            "--gif-scale", str(int(gif_scale)),
+            "--consensus", ("alpha" if consensus not in ("alpha", "none", "full") else consensus),
+            "--colors", str(int(colors)),
+            "--no-register",
+        ]
+        if subsample > 0:
+            cmd_pix += ["--subsample", str(int(subsample))]
+        if use_pingpong:
+            cmd_pix += ["--pingpong"]
+
+        r_pix = subprocess.run(cmd_pix, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=180)
+        if r_pix.returncode != 0:
+            raise RuntimeError(f"pixelize.py failed (exit {r_pix.returncode}):\n{r_pix.stdout}\n{r_pix.stderr}")
+
+        # 3. Run scripts/validate_loop.py (non-fatal report so user can see PASS/FAIL in UI)
+        pix_frame_paths = sorted(
+            glob.glob(os.path.join(work_dir, "frame*.png")),
+            key=lambda p: int("".join(filter(str.isdigit, os.path.basename(p))) or 0),
+        )
+        cmd_val = [sys.executable, VALIDATE_PY, "--frames", *pix_frame_paths]
+        if consensus == "none":
+            cmd_val += ["--w-spread", "8"]
+        r_val = subprocess.run(cmd_val, cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=60)
+
+        # 4. GIF / sheet already live in ComfyUI output/aseprite; copy the zoom sheet there for inline Web UI preview
+        comfy_out = out_dir
+        ui_images = []
+        for src, suffix in [(gif_path, ".gif"), (zoom_path, "_zoom.png"), (sheet_path, "_sheet.png")]:
+            if os.path.exists(src):
+                fname = f"{safe_name}{suffix}"
+                dst = os.path.join(comfy_out, fname)
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    shutil.copyfile(src, dst)
+                ui_images.append({"filename": fname, "subfolder": "aseprite", "type": "output"})
+
+        # 5. Build output IMAGE tensors (upscaled pixel frames on dark gray + zoom sheet)
+        upscaled_tensors = []
+        for p in pix_frame_paths:
+            rgba = Image.open(p).convert("RGBA")
+            w_c, h_c = rgba.size
+            bg = Image.new("RGBA", (w_c, h_c), (40, 40, 40, 255))
+            bg.alpha_composite(rgba)
+            up = bg.convert("RGB").resize((w_c * max(1, int(gif_scale)), h_c * max(1, int(gif_scale))), Image.NEAREST)
+            upscaled_tensors.append(torch.from_numpy(np.array(up).astype(np.float32) / 255.0))
+        pixel_frames_tensor = torch.stack(upscaled_tensors, dim=0)
+
+        if os.path.exists(zoom_path):
+            z_rgb = Image.open(zoom_path).convert("RGB")
+            zoom_tensor = torch.from_numpy(np.array(z_rgb).astype(np.float32) / 255.0).unsqueeze(0)
+        else:
+            zoom_tensor = pixel_frames_tensor[:1]
+
+        report = (
+            f"=== Aseprite Outputs ===\n"
+            f".aseprite : {ase_path}\n"
+            f".gif ({gif_scale}x) : {gif_path}\n"
+            f"sheet (1x): {sheet_path}\n"
+            f"zoom (2x) : {zoom_path}\n\n"
+            f"=== pixelize.py ===\n{r_pix.stdout.strip()}\n\n"
+            f"=== validate_loop.py ===\n{r_val.stdout.strip()}"
+        )
+        print(report)
+        _purge_vram_and_vbars()
+        print("[AsepritePixelizeAssemble] Freed Stage 2 Wan2.2 14B vbars from VRAM after completion so re-rolls never stall.")
+        return {"ui": {"images": ui_images}, "result": (pixel_frames_tensor, zoom_tensor, report)}
+
+class AsepriteStageBridge:
+    """Bridges Stage 1 (Anima reference image generation) to Stage 2 (Wan2.2 I2V).
+
+    Unloads Stage 1 models (Anima UNet / Qwen CLIP / Qwen VAE) from 16GB VRAM once
+    the reference image is decoded, preventing VRAM contention when Wan2.2 14B loads.
+    Also supports optional override_image input if the user wants to feed an existing image.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "anima_image": ("IMAGE",),
+                "use_override_image": ("BOOLEAN", {"default": False,
+                                                   "tooltip": "If True and override_image is connected, use override_image instead of anima_image"}),
+                "unload_stage1_vram": ("BOOLEAN", {"default": True,
+                                                   "tooltip": "Free Stage 1 (Anima) models from GPU VRAM before Wan2.2 14B starts"}),
+                "save_as_input_name": ("STRING", {"default": "anima_latest_ref.png"}),
+            },
+            "optional": {
+                "override_image": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("start_image",)
+    FUNCTION = "bridge"
+    CATEGORY = "pixel_art/aseprite"
+
+    def bridge(self, anima_image, use_override_image=False, unload_stage1_vram=True, save_as_input_name="anima_latest_ref.png", override_image=None):
+        chosen = override_image if (use_override_image and override_image is not None) else anima_image
+        if save_as_input_name and save_as_input_name.strip():
+            fname = os.path.basename(save_as_input_name.strip())
+            if not fname.lower().endswith(".png"):
+                fname += ".png"
+            in_path = os.path.join(folder_paths.get_input_directory(), fname)
+            arr = (chosen[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+            Image.fromarray(arr[:, :, :3], "RGB").save(in_path)
+
+        if unload_stage1_vram:
+            _purge_vram_and_vbars()
+            print("[AsepriteStageBridge] Unloaded Stage 1 models + vbars from VRAM before Stage 2 (Wan2.2 14B).")
+
+        return (chosen,)
+
+
+class AsepriteLLMPromptDirector:
+    """Calls an OpenAI-compatible LLM endpoint inside ComfyUI to compile a short Chinese
+    pose + motion description (plus character card) into standardized Stage 1 (Anima Danbooru tags)
+    and Stage 2 (Wan2.2 natural-language motion) positive & negative prompts.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base_url": ("STRING", {"default": DEFAULT_LLM_BASE_URL, "tooltip": "OpenAI 兼容接口地址，例如 https://api.openai.com/v1；留空则只用本地模板编译"}),
+                "api_key": ("STRING", {"default": ""}),
+                "model": (_get_cached_models(), {"default": _get_cached_models()[0]}),
+                "charcard": (
+                    _get_charcard_choices(),
+                    {"default": _CHARCARD_NONE},
+                ),
+                "user_prompt": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "参考图1的角色，换成M字开腿坐在地上的姿势，下身不穿裤子完全裸露，双手扶在大腿上，害羞脸红；动作：缓慢呼吸，胸口与肩膀轻微起伏",
+                    },
+                ),
+            },
+            "optional": {
+                "reference_image": ("IMAGE",),
+                "pose_preset": (_get_pose_preset_choices(), {"default": "none (不使用预设骨骼)"}),
+                "prompt_mode": (
+                    [
+                        "auto_compile (LLM编译并自动回填下方文本框)",
+                        "manual_override (直接使用下方4个文本框，不调LLM)",
+                        "compile_if_empty (文本框为空时调LLM，非空时用文本框)",
+                    ],
+                    {"default": "auto_compile (LLM编译并自动回填下方文本框)"},
+                ),
+                "stage1_positive": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "",
+                        "tooltip": "Stage 1 正面提示词（可见/可直接手改；点上方按钮可一键预填）",
+                    },
+                ),
+                "stage1_negative": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "",
+                        "tooltip": "Stage 1 负面提示词（可见/可直接手改）",
+                    },
+                ),
+                "stage2_positive": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "",
+                        "tooltip": "Stage 2 视频动作正面提示词（可见/可直接手改）",
+                    },
+                ),
+                "stage2_negative": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "default": "",
+                        "tooltip": "Stage 2 视频动作负面提示词（可见/可直接手改）",
+                    },
+                ),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+            },
+        }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        return True
+
+    @classmethod
+    def IS_CHANGED(cls, prompt=None, **kwargs):
+        pose_node_state = ""
+        if isinstance(prompt, dict):
+            for nid, ndata in prompt.items():
+                if isinstance(ndata, dict) and ndata.get("class_type") == "AsepriteNSFWPoseLibrary":
+                    pose_node_state += json.dumps(ndata.get("inputs", {}), sort_keys=True, ensure_ascii=False)
+        sig = json.dumps({k: str(v) for k, v in kwargs.items() if k != "reference_image"}, sort_keys=True, ensure_ascii=False) + "|" + pose_node_state
+        return hashlib.sha256(sig.encode("utf-8")).hexdigest()
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("anima_positive", "anima_negative", "wan_positive", "wan_negative")
+    FUNCTION = "compile_prompts"
+    OUTPUT_NODE = True
+    CATEGORY = "pixel_art/aseprite"
+    def _get_charcard_macros(self, charcard_choice: str) -> dict:
+        none_macros = {"anima_tags": "", "neg_tags": "", "wan_subject": "the character"}
+        if not charcard_choice or charcard_choice.startswith("none"):
+            return none_macros
+        disk_path = os.path.join(PROJECT_ROOT, "scripts", charcard_choice.split(" ")[0].strip())
+        if os.path.exists(disk_path):
+            try:
+                data = json.load(open(disk_path, encoding="utf-8"))
+                return {
+                    "anima_tags": data.get("anima_nsfw_tags") or data.get("anima_tags") or "",
+                    "neg_tags": data.get("negative_tags") or "panties, underwear, shorts, bra",
+                    "wan_subject": data.get("wan_subject") or data.get("card") or "the character",
+                }
+            except Exception:
+                pass
+        return none_macros
+
+    def _extract_text_from_response(self, resp_json: dict) -> str:
+        if not isinstance(resp_json, dict):
+            return ""
+        # 1. OpenAI /chat/completions format
+        choices = resp_json.get("choices")
+        if isinstance(choices, list) and choices:
+            msg = choices[0].get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("text")]
+                if parts:
+                    return "\n".join(parts).strip()
+            reasoning = msg.get("reasoning_content") or msg.get("reasoning")
+            if isinstance(reasoning, str) and "{" in reasoning and "}" in reasoning:
+                return reasoning.strip()
+        # 2. OpenAI /responses format
+        if isinstance(resp_json.get("output_text"), str) and resp_json["output_text"].strip():
+            return resp_json["output_text"].strip()
+        for item in resp_json.get("output") or []:
+            if isinstance(item, dict):
+                for c in item.get("content") or []:
+                    if isinstance(c, dict) and isinstance(c.get("text"), str) and c["text"].strip():
+                        return c["text"].strip()
+        return ""
+
+    def _tensor_to_jpeg_data_url(self, img_tensor, max_side: int = 512) -> str:
+        arr = (img_tensor[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).astype(np.uint8)
+        pil_im = Image.fromarray(arr).convert("RGB")
+        w, h = pil_im.size
+        if max(w, h) > max_side:
+            scale = max_side / float(max(w, h))
+            pil_im = pil_im.resize((max(1, int(round(w * scale))), max(1, int(round(h * scale)))), Image.LANCZOS)
+        buf = io.BytesIO()
+        pil_im.save(buf, format="JPEG", quality=88)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{b64}"
+
+    def _request_llm_text(self, base_url: str, resolved_key: str, model: str, sys_text: str, user_msg: str, image_data_url: str = "") -> str:
+        base = base_url.strip().rstrip("/")
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "ComfyUI-AsepritePromptDirector/1.0",
+        }
+        if resolved_key:
+            headers["Authorization"] = f"Bearer {resolved_key}"
+
+        errors = []
+        prefer_responses = "argon" in model.lower() or model.lower().endswith("-high")
+        endpoints = ["responses", "chat"] if prefer_responses else ["chat", "responses"]
+
+        # Try with image first (if provided), then automatically retry text-only if multimodal safety filter returns empty
+        img_candidates = [image_data_url, ""] if image_data_url else [""]
+        for img_url in img_candidates:
+            for ep in endpoints:
+                try:
+                    if ep == "chat":
+                        url = f"{base}/chat/completions"
+                        payload = {
+                            "model": model.strip(),
+                            "messages": [
+                                {"role": "system", "content": sys_text},
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        [
+                                            {"type": "image_url", "image_url": {"url": img_url}},
+                                            {"type": "text", "text": user_msg},
+                                        ]
+                                        if img_url
+                                        else user_msg
+                                    ),
+                                },
+                            ],
+                            "temperature": 0.2,
+                        }
+                        if model.lower().endswith("-high") or "argon" in model.lower():
+                            payload["reasoning_effort"] = "low"
+                    else:
+                        url = f"{base}/responses"
+                        payload = {
+                            "model": model.strip(),
+                            "instructions": sys_text,
+                            "input": (
+                                [
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {"type": "input_image", "image_url": img_url},
+                                            {"type": "input_text", "text": user_msg},
+                                        ],
+                                    }
+                                ]
+                                if img_url
+                                else user_msg
+                            ),
+                        }
+                        if model.lower().endswith("-high") or "argon" in model.lower():
+                            payload["reasoning"] = {"effort": "low"}
+                    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+                    raw_resp = urllib.request.urlopen(req, timeout=35).read().decode("utf-8")
+                    resp_json = json.loads(raw_resp)
+                    text = self._extract_text_from_response(resp_json)
+                    if text and re.search(r"\{[\s\S]*\}", text):
+                        if img_url and ("hair" not in text.lower() and "eyes" not in text.lower()):
+                            errors.append(f"{ep} did not extract character appearance tags from image")
+                            continue
+                        return text
+                    elif text:
+                        errors.append(f"{ep} returned non-JSON: {text[:120]}")
+                    else:
+                        errors.append(f"{ep}{'(img)' if img_url else ''} returned empty content")
+                except Exception as e:
+                    errors.append(f"{ep}{'(img)' if img_url else ''} error: {e}")
+        raise RuntimeError(f"模型 {model} 未返回有效 JSON ({'; '.join(errors)})")
+
+    @staticmethod
+    def _sanitize_cn_for_cloud_llm(text: str) -> str:
+        """Replaces explicit Chinese NSFW phrases with structural pose phrases before calling cloud LLM
+        so Gemini safety filters never return empty choices=[], while preserving pose/hand/motion semantics.
+        """
+        s = str(text or "")
+        replacements = [
+            ("蹲姿骑乘的姿势并起伏", "正面深蹲姿势"),
+            ("蹲姿骑乘", "正面深蹲姿势"),
+            ("女上位骑乘", "正面深蹲姿势"),
+            ("骑乘", "深蹲"),
+            ("下身不穿裤子完全裸露", "露腿短装"),
+            ("不穿裤子完全裸露", "露腿短装"),
+            ("下身完全裸露", "露腿短装"),
+            ("完全裸露", "轻便衣装"),
+            ("全裸", "轻便衣装"),
+            ("裸体", "轻便衣装"),
+            ("赤裸", "轻便衣装"),
+            ("不穿内裤", "轻便短装"),
+            ("不穿裤子", "露腿短装"),
+            ("露出胸部与乳头", "敞开外套"),
+            ("害羞脸红", "神情柔和微红"),
+            ("露点", ""),
+            ("乳头", ""),
+            ("私处", ""),
+            ("小穴", ""),
+            ("阴部", ""),
+            ("肉棒", ""),
+            ("做爱", "互动"),
+            ("交合", "贴近互动"),
+            ("抽插", "上下律动"),
+            ("抽送", "前后律动"),
+            ("后入式", "背后环抱姿态"),
+            ("后入", "背后姿态"),
+            ("娇喘", "轻微呼吸"),
+            ("双手撑在大腿上", "双臂向两侧张开、双手搭在外侧膝盖边缘（远离腰腹中线）"),
+            ("双手放在大腿上", "双臂向两侧张开、双手搭在外侧膝盖边缘（远离腰腹中线）"),
+            ("手撑在大腿上", "双臂向两侧张开、双手搭在外侧膝盖边缘"),
+            ("手扶大腿", "双手搭在外侧膝盖边缘"),
+        ]
+        for old, new in replacements:
+            s = s.replace(old, new)
+        return s
+
+    @staticmethod
+    def _parse_cn_pose_and_motion(user_prompt: str, pose_meta: dict) -> tuple:
+        """Extracts pose description, Danbooru tags, and Wan2.2 motion from Chinese user_prompt + pose_meta."""
+        up = str(user_prompt or "")
+        pose_a = pose_meta.get("anima_pose_tags") or "standing, looking at viewer, gentle smile"
+        pose_q = pose_meta.get("qwen_pose_prompt") or "standing facing forward with a gentle expression, entire full body from head to feet inside the frame with white margins"
+        pose_w = pose_meta.get("wan_motion_prompt") or "gently breathing with subtle chest and shoulder rise and fall"
+
+        # Only override pose_q / pose_a from Chinese text when no preset skeleton was selected (preserves duo_* and all preset skeletons!)
+        if not pose_meta:
+            if any(k in up for k in ("蹲", "骑乘")):
+                if any(h in up for h in ("扶在地", "撑地", "手在地", "扶地")):
+                    hand_q = "with both hands resting on the floor outside her hips for support"
+                    hand_a = "hands on floor, supporting self"
+                else:
+                    hand_q = "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"
+                    hand_a = "arms spread outward, hands on outer knees"
+                pose_q = f"in a balanced front-view wide-legged squat with knees spread apart {hand_q}, natural 2D anime body proportions without extreme foreshortening, entire full body from head to feet inside the frame with white margins"
+                pose_a = f"1girl, solo, squatting, wide spread legs, {hand_a}, full frontal, balanced proportions"
+            elif any(k in up for k in ("M字", "m字", "坐在地上", "坐姿")):
+                hand_q = "with both hands resting on the floor beside her outer hips away from her crotch"
+                hand_a = "arms at sides, hands on floor"
+                pose_q = f"sitting on the floor in an M-shaped spread-legs pose (m legs) facing forward {hand_q}, entire full body inside the frame with white margins"
+                pose_a = f"1girl, solo, sitting, sitting on floor, m legs, spread legs, knees up, {hand_a}, full frontal"
+            elif any(k in up for k in ("跪", "挺胸")):
+                pose_q = "kneeling upright on both knees facing forward with her back arched and arms behind her back, entire full body inside the frame"
+                pose_a = "1girl, solo, kneeling, arched back, arms behind back, chest out, full frontal"
+            elif any(k in up for k in ("趴", "四肢着地", "后入")):
+                pose_q = "on all fours on the floor with her hips raised high and head turned to look back at the viewer"
+                pose_a = "1girl, solo, all fours, doggy style, top-down bottom-up, looking back, arched back"
+            elif any(k in up for k in ("仰卧", "躺")):
+                pose_q = "lying on her back with both legs raised and spread wide apart, hands holding the backs of her outer knees"
+                pose_a = "1girl, solo, on back, lying, spread legs, legs up, grabbing own knees"
+        has_active_motion = any(k in up for k in ("并起伏", "上下起伏", "骑乘", "弹跳", "律动", "抽插", "抽送", "摇晃", "摆动", "挺腰"))
+        is_default_breath_suffix = up.endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏")
+        if has_active_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃"))):
+            if pose_meta.get("wan_motion_prompt") and any(k in pose_meta.get("id", "") for k in ("squat", "cowgirl", "doggy", "arch", "mating", "standing_behind")):
+                pose_w = pose_meta["wan_motion_prompt"]
+            else:
+                pose_w = "smoothly bouncing her hips, pelvis, and torso up and down in a pronounced rhythmic riding motion with natural knee flexion and chest bounce"
+        elif "缓慢呼吸" in up and not has_active_motion:
+            pose_w = "breathing slowly with her chest and shoulders gently rising and falling"
+        extra_tags = []
+        extra_qwen = []
+        if any(k in up for k in ("不穿裤", "脱下短裤", "下身裸露", "完全裸露", "全裸", "裸体")):
+            if "bottomless" not in pose_a:
+                extra_tags.append("bottomless, no panties, exposed pussy, uncensored")
+            if "bottomless" not in pose_q:
+                extra_qwen.append("lower body completely bare and bottomless without shorts or panties")
+        if any(k in up for k in ("敞开", "解开", "露出胸", "上身裸", "乳头")):
+            if "breasts out" not in pose_a:
+                extra_tags.append("open clothes, breasts out, nipples, uncensored")
+        if any(k in up for k in ("脸红", "害羞", "娇羞")):
+            if "blush" not in pose_a:
+                extra_tags.append("shy, blush, embarrassed")
+        if extra_tags:
+            pose_a = f"{pose_a}, {', '.join(extra_tags)}"
+        if extra_qwen:
+            pose_q = f"{pose_q}, {', '.join(extra_qwen)}"
+        return pose_a, pose_q, pose_w
+
+    def build_local_template(self, charcard: str, pose_preset: str = "none (不使用预设骨骼)", user_prompt: str = "", wd14_override: dict = None) -> tuple:
+        macros = dict(wd14_override) if wd14_override else dict(self._get_charcard_macros(charcard))
+        pose_id = (pose_preset or "none").split(" ")[0].strip()
+        pose_meta = _load_pose_library().get(pose_id, {}) if pose_id != "none" else {}
+        pose_a, pose_q, pose_w = self._parse_cn_pose_and_motion(user_prompt, pose_meta)
+
+        is_duo = pose_id.startswith("duo_") or any(k in str(user_prompt) for k in ("双人", "两人", "男女", "两个女孩", "1boy", "2girls"))
+        if is_duo:
+            macros["anima_tags"] = re.sub(r"\bsolo\b\s*,?", "", macros.get("anima_tags", "")).strip(" ,")
+        neg_multi = "" if is_duo else "multiple girls, 2girls, "
+
+        anima_pos = (
+            f"Picture 1 is the character reference ({macros['wan_subject']}). "
+            f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
+            f"and redraw her in the pose of Picture 2: {pose_q}. "
+            f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, "
+            f"{macros['anima_tags']}, {pose_a}, full body, white background, simple background, character in center with margins around body"
+        ).strip(" ,")
+        anima_neg = f"worst quality, low quality, score_1, score_2, score_3, realistic, 3d, blurry, jpeg artifacts, sepia, {neg_multi}cropped, out of frame, bad anatomy, extra limbs, hands between legs, hands covering crotch, hands on inner thighs, {macros['neg_tags']}".strip(" ,")
+        wan_pos = f"anime style, {macros['wan_subject']} {pose_q.split(',')[0]} on a plain white background, {pose_w}, static camera, fixed composition, full body, clean 2D anime illustration".strip(" ,")
+        wan_neg = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"
+        return (anima_pos, anima_neg, wan_pos, wan_neg)
+
+    def _compile_core(self, base_url, api_key, model, charcard, user_prompt, system_prompt, reference_image=None, pose_preset="none (不使用预设骨骼)"):
+        ref_hash = ""
+        image_data_url = ""
+        wd14_info = None
+        wd14_override = None
+        macros = dict(self._get_charcard_macros(charcard))
+        if reference_image is not None:
+            try:
+                from scripts.extract_charcard import run_local_wd14
+                arr_ref = (reference_image[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).astype(np.uint8)
+                wd14_info = run_local_wd14(Image.fromarray(arr_ref).convert("RGB"))
+                # Auto-detect if user swapped LoadImage to a character that doesn't match the selected charcard preset's hair color!
+                id_tags = wd14_info.get("identity_tags", [])
+                ref_hairs = [t for t in id_tags if t.endswith("_hair") and t not in ("long_hair", "very_long_hair", "short_hair", "medium_hair", "straight_hair", "wavy_hair", "twintails", "ponytail")]
+                card_tags_lower = macros.get("anima_tags", "").lower()
+                hair_mismatch = bool(ref_hairs) and not any(rh.replace("_", " ") in card_tags_lower for rh in ref_hairs)
+                if not charcard or charcard.startswith("none") or hair_mismatch:
+                    image_data_url = self._tensor_to_jpeg_data_url(reference_image, max_side=512)
+                    ref_hash = hashlib.md5(image_data_url.encode("ascii")).hexdigest()[:12]
+                    clean_id = [t.replace("_", " ") for t in id_tags if not any(w in t for w in ("shorts", "panties", "underwear", "skirt", "pants", "dress", "bikini", "bra"))]
+                    wd14_override = {
+                        "anima_tags": "1girl, solo, " + ", ".join(clean_id[:18]) + ", breasts out, nipples, bottomless, no panties, pussy, uncensored",
+                        "neg_tags": "panties, underwear, shorts, bra, censored",
+                        "wan_subject": "a 2D anime girl (" + ", ".join(clean_id[:8]) + ")",
+                    }
+                    macros = dict(wd14_override)
+                    if hair_mismatch:
+                        print(f"[AsepriteLLMPromptDirector] Detected new reference image hair ({ref_hairs}); auto-adapting character tags from reference_image.")
+            except Exception as e:
+                print(f"[AsepriteLLMPromptDirector] Local WD14 hint warning: {e}")
+        pose_id = (pose_preset or "none").split(" ")[0].strip()
+        pose_meta = _load_pose_library().get(pose_id, {}) if pose_id != "none" else {}
+        is_duo = pose_id.startswith("duo_") or any(k in str(user_prompt) for k in ("双人", "两人", "男女", "两个女孩", "1boy", "2girls"))
+        if is_duo:
+            macros["anima_tags"] = re.sub(r"\bsolo\b\s*,?", "", macros.get("anima_tags", "")).strip(" ,")
+        cache_key = hashlib.sha256(
+            f"{base_url}|{model}|{charcard}|{user_prompt}|{ref_hash}|{pose_id}|v8".encode("utf-8")
+        ).hexdigest()
+        if cache_key in _PROMPT_CACHE:
+            print("[AsepriteLLMPromptDirector] Reusing cached compiled prompts.")
+            return _PROMPT_CACHE[cache_key]
+
+        resolved_key = _resolve_api_key(api_key)
+        pose_a_local, pose_q_local, pose_w_local = self._parse_cn_pose_and_motion(user_prompt, pose_meta)
+
+        # If user selected an active motion or wrote "并起伏/骑乘" while leaving the default "动作：缓慢呼吸..." suffix, replace suffix so LLM compiles active motion
+        up_for_llm = user_prompt
+        if any(k in str(user_prompt) for k in ("并起伏", "上下起伏", "骑乘", "抽插", "弹跳", "律动")) and str(user_prompt).endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏"):
+            up_for_llm = str(user_prompt).replace("动作：缓慢呼吸，胸口与肩膀轻微起伏", "动作：身体与臀部明显上下起伏律动，膝盖随动作弯曲伸展，胸部自然晃动")
+        clean_up = self._sanitize_cn_for_cloud_llm(up_for_llm)
+        prompt_with_pose = clean_up
+        if pose_meta and pose_meta.get("label"):
+            clean_lbl = self._sanitize_cn_for_cloud_llm(pose_meta.get("label"))
+            prompt_with_pose = f"{clean_up}\n(参考骨骼姿态: {clean_lbl})"
+
+        if image_data_url:
+            sys_text = (
+                "你是一个专精于二次元角色立绘 (Danbooru Tag) 与图生视频动画 (Wan2.2 I2V) 的多模态视觉提示词编译器。\n"
+                "用户上传了一张【角色参考图】并给出了【中文姿势与动作要求】。\n"
+                "请观察参考图中的角色，提取她的全部标志性外观特征（1girl, solo, 发色, 发长, 发型, 刘海形状, 发饰/发卡/蝴蝶结/眼镜/项圈等配饰, 瞳色, 身材特征, 以及保留的服饰颜色与款式），"
+                "然后结合用户的中文姿势、表情与动作描述，严格输出以下 JSON 格式（不要输出任何额外解释）：\n"
+                "{\n"
+                '  "char_appearance_tags": "1girl, solo, <从参考图提取的完整Danbooru角色外观、发型发色、瞳色、发饰与服饰英文标签>",\n'
+                '  "char_wan_subject": "<用英文自然语言详细描述参考图中角色的外貌特征>",\n'
+                '  "anima_positive": "masterpiece, best quality, score_9, score_8, newest, <char_appearance_tags全部标签>, <根据用户描述转换的姿势/肢体位置/表情/视角Danbooru英文标签>, full body, white background, simple background, character in center with margins around body",\n'
+                '  "anima_negative": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, multiple girls, 2girls, cropped, out of frame, bad anatomy, extra limbs",\n'
+                '  "wan_positive": "anime style, <char_wan_subject> <用英文自然语言描述当前所处姿势与表情> on a plain white background, <用英文自然语言描述单程半周期柔和运动轨迹，不要堆砌tag>, static camera, fixed composition, full body, clean 2D anime illustration, smooth subtle motion",\n'
+                '  "wan_negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"\n'
+                "}"
+            )
+            wd14_anchor = ""
+            if wd14_info and wd14_info.get("identity_tags"):
+                wd14_anchor = f"\n【本地 WD14 视觉标签锚点（高置信度特征，请保留入 char_appearance_tags）】：{', '.join(wd14_info['identity_tags'])}"
+            user_msg = (
+                f"请观察附图中角色的外貌特征，并按以下要求编译 JSON 提示词：{wd14_anchor}\n"
+                f"【用户姿势与动作要求】：\n{prompt_with_pose}"
+            )
+        else:
+            sys_text = DEFAULT_SYSTEM_PROMPT
+            user_msg = (
+                f"【用户姿势与动作要求】：\n{prompt_with_pose}\n\n"
+                f"请严格输出包含 anima_positive, anima_negative, wan_positive, wan_negative 四个键的 JSON 对象，"
+                f"并在对应位置保留 {{CHARCARD_ANIMA_TAGS}}、{{CHARCARD_NEG_TAGS}}、{{CHARCARD_WAN_SUBJECT}} 宏占位符。"
+            )
+
+        try:
+            content = self._request_llm_text(base_url, resolved_key, model, sys_text, user_msg, image_data_url=image_data_url)
+            m = re.search(r"\{[\s\S]*\}", content)
+            if not m:
+                raise RuntimeError(f"LLM 未返回 JSON 格式: {content}")
+            parsed = json.loads(m.group(0))
+        except Exception as e:
+            print(f"[AsepriteLLMPromptDirector] Cloud LLM refused or returned empty ({e}); falling back to local charcard+pose compiler.")
+            res = self.build_local_template(charcard, pose_preset, user_prompt=user_prompt, wd14_override=wd14_override)
+            _PROMPT_CACHE[cache_key] = res
+            return res
+
+        extracted_tags = str(parsed.get("char_appearance_tags") or "").strip(" ,")
+        extracted_subj = str(parsed.get("char_wan_subject") or "").strip()
+        if not macros["anima_tags"] and extracted_tags:
+            macros["anima_tags"] = extracted_tags
+        if macros["wan_subject"] == "the character" and extracted_subj:
+            macros["wan_subject"] = extracted_subj
+
+        def _expand(s: str) -> str:
+            out = (
+                str(s or "")
+                .replace("{{CHARCARD_ANIMA_TAGS}}", macros["anima_tags"])
+                .replace("{{CHARCARD_NEG_TAGS}}", macros["neg_tags"])
+                .replace("{{CHARCARD_WAN_SUBJECT}}", macros["wan_subject"])
+                .replace("<char_appearance_tags>", macros["anima_tags"])
+                .replace("<char_appearance_tags全部标签>", macros["anima_tags"])
+                .replace("<char_wan_subject>", macros["wan_subject"])
+                .replace("<角色固定外观与服装Danbooru标签>", macros["anima_tags"])
+                .replace("<与当前服装状态冲突的标签>", macros["neg_tags"])
+            )
+            out = re.sub(r"\(\s*\)", "", out)
+            out = re.sub(r",\s*,", ",", out)
+            out = re.sub(r"\s{2,}", " ", out).strip(" ,")
+            return out
+
+        anima_pos = _expand(parsed.get("anima_positive", ""))
+        if "picture 1" not in anima_pos.lower() and "image 1" not in anima_pos.lower():
+            anima_pos = (
+                f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
+                f"and redraw her in the pose of Picture 2 ({pose_q_local}). {anima_pos}"
+            )
+        if macros["anima_tags"] and (macros["anima_tags"][:25] not in anima_pos):
+            anima_pos = f"{anima_pos}, {macros['anima_tags']}"
+        if pose_a_local and (pose_a_local[:20] not in anima_pos):
+            anima_pos = f"{anima_pos}, {pose_a_local}"
+        # Strip any crotch-occluding hand phrases that LLM may have generated from '双手撑在大腿上'
+        for bad_h, good_h in [
+            ("with both hands resting on her thighs", "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"),
+            ("hands resting on her thighs", "hands resting on outer knee edges away from pelvis"),
+            ("hands on own thighs", "arms spread outward, hands on outer knees"),
+            ("hands on thighs", "arms spread outward, hands on outer knees"),
+            ("grabbing own thighs", "hands on outer knees"),
+        ]:
+            anima_pos = anima_pos.replace(bad_h, good_h)
+        anima_neg = _expand(parsed.get("anima_negative", ""))
+        if is_duo:
+            anima_neg = re.sub(r"\b(multiple girls|2girls)\b\s*,?", "", anima_neg).strip(" ,")
+        if "hands covering crotch" not in anima_neg:
+            anima_neg = f"{anima_neg}, hands between legs, hands covering crotch, hands on inner thighs"
+        wan_pos = _expand(parsed.get("wan_positive", ""))
+        if not wan_pos:
+            wan_pos = f"anime style, {macros['wan_subject']} on a plain white background, {pose_w_local}, static camera, fixed composition, full body, clean 2D anime illustration"
+        wan_neg = _expand(parsed.get("wan_negative", ""))
+        res = (anima_pos, anima_neg, wan_pos, wan_neg)
+        _PROMPT_CACHE[cache_key] = res
+        return res
+
+    def compile_prompts(
+        self,
+        base_url,
+        api_key,
+        model,
+        charcard,
+        user_prompt,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        reference_image=None,
+        pose_preset="none (不使用预设骨骼)",
+        prompt_mode="auto_compile (LLM编译并自动回填下方文本框)",
+        stage1_positive="",
+        stage1_negative="",
+        stage2_positive="",
+        stage2_negative="",
+        prompt=None,
+        **kwargs,
+    ):
+        # 1. Self-heal if an un-refreshed browser tab sent shifted widgets (system_prompt -> pose_preset -> prompt_mode)
+        if isinstance(system_prompt, str) and any(system_prompt.startswith(p) for p in ("solo_", "duo_", "none")):
+            if isinstance(pose_preset, str) and any(pose_preset.startswith(m) for m in ("compile_if_empty", "auto_compile", "manual_override")):
+                prompt_mode = pose_preset
+            pose_preset = system_prompt
+            system_prompt = DEFAULT_SYSTEM_PROMPT
+
+        # 2. Always sync pose_preset with AsepriteNSFWPoseLibrary (Node #42) in the active prompt graph if present!
+        if isinstance(prompt, dict):
+            for nid, ndata in prompt.items():
+                if isinstance(ndata, dict) and ndata.get("class_type") == "AsepriteNSFWPoseLibrary":
+                    n_in = ndata.get("inputs", {})
+                    if n_in.get("enable_pose_control", True) and n_in.get("pose_preset"):
+                        pose_preset = n_in["pose_preset"]
+                    elif not n_in.get("enable_pose_control", True):
+                        pose_preset = "none (不使用预设骨骼)"
+                    break
+        global _ACTIVE_POSE_ID, _ACTIVE_USER_PROMPT
+        _ACTIVE_POSE_ID = (pose_preset or "none").split(" ")[0].strip()
+        _ACTIVE_USER_PROMPT = str(user_prompt or "")
+
+        mode_key = (prompt_mode or "auto_compile").split(" ")[0].strip()
+        has_manual = any(s and s.strip() for s in (stage1_positive, stage1_negative, stage2_positive, stage2_negative))
+        cur_sig = f"{charcard}|{pose_preset}|{user_prompt}"
+        prev_sig = getattr(self.__class__, "_LAST_COMPILED_SIG", None)
+        prev_prompts = getattr(self.__class__, "_LAST_COMPILED_PROMPTS", None)
+
+        # If user changed charcard, pose_preset (on Node 42 or 33), or user_prompt, or if boxes match previous auto-output, re-compile!
+        is_auto_filled_stale = (prev_prompts is not None and (stage1_positive.strip(), stage1_negative.strip(), stage2_positive.strip(), stage2_negative.strip()) == prev_prompts)
+        inputs_changed = (prev_sig is not None and cur_sig != prev_sig)
+
+        if mode_key == "manual_override" or (mode_key == "compile_if_empty" and has_manual and not inputs_changed and not is_auto_filled_stale):
+            tpl = self.build_local_template(charcard, pose_preset, user_prompt=user_prompt)
+            res = (
+                stage1_positive.strip() if (stage1_positive and stage1_positive.strip()) else tpl[0],
+                stage1_negative.strip() if (stage1_negative and stage1_negative.strip()) else tpl[1],
+                stage2_positive.strip() if (stage2_positive and stage2_positive.strip()) else tpl[2],
+                stage2_negative.strip() if (stage2_negative and stage2_negative.strip()) else tpl[3],
+            )
+            print(
+                f"=== [AsepriteLLMPromptDirector (MANUAL OVERRIDE)] ===\n"
+                f"[anima_positive]: {res[0]}\n"
+                f"[anima_negative]: {res[1]}\n"
+                f"[wan_positive]  : {res[2]}\n"
+                f"[wan_negative]  : {res[3]}"
+            )
+            return {"ui": {"compiled_prompts": list(res)}, "result": res}
+
+        res = self._compile_core(
+            base_url, api_key, model, charcard, user_prompt, system_prompt,
+            reference_image=reference_image, pose_preset=pose_preset,
+        )
+        self.__class__._LAST_COMPILED_SIG = cur_sig
+        self.__class__._LAST_COMPILED_PROMPTS = tuple(s.strip() for s in res)
+        print(
+            f"=== [AsepriteLLMPromptDirector ({model} | pose={pose_preset.split(' ')[0]})] ===\n"
+            f"[anima_positive]: {res[0]}\n"
+            f"[anima_negative]: {res[1]}\n"
+            f"[wan_positive]  : {res[2]}\n"
+            f"[wan_negative]  : {res[3]}"
+        )
+        return {"ui": {"compiled_prompts": list(res)}, "result": res}
+
+
+@server.PromptServer.instance.routes.post("/aseprite_llm/compile_preview")
+async def compile_llm_preview(request):
+    director = AsepriteLLMPromptDirector()
+    try:
+        body = await request.json()
+        mode = body.get("mode", "llm")
+        charcard = body.get("charcard") or _CHARCARD_NONE
+        pose_preset = body.get("pose_preset") or "none (不使用预设骨骼)"
+        if mode == "template":
+            res = director.build_local_template(charcard, pose_preset, user_prompt=body.get("user_prompt") or "")
+            return web.json_response({"ok": True, "prompts": list(res), "source": "template"})
+        res = director._compile_core(
+            base_url=body.get("base_url") or DEFAULT_LLM_BASE_URL,
+            api_key=body.get("api_key") or "",
+            model=body.get("model") or "",
+            charcard=charcard,
+            user_prompt=body.get("user_prompt") or "",
+            system_prompt=body.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
+            reference_image=None,
+            pose_preset=pose_preset,
+        )
+        return web.json_response({"ok": True, "prompts": list(res), "source": "llm"})
+    except Exception as e:
+        try:
+            tpl = director.build_local_template(
+                body.get("charcard") or _CHARCARD_NONE,
+                body.get("pose_preset") or "none",
+                user_prompt=body.get("user_prompt") or "",
+            )
+        except Exception:
+            tpl = ("", "", "", "")
+        return web.json_response({"ok": False, "error": str(e), "prompts": list(tpl)})
+
+def _purge_vram_and_vbars(*extra_patchers):
+    """Unloads all models and purges comfy-aimdo ModelVBARs without aborting the active malloc_graph."""
+    patchers = list(extra_patchers)
+    for lm in list(getattr(comfy.model_management, "current_loaded_models", [])):
+        if getattr(lm, "model", None) is not None:
+            patchers.append(lm.model)
+
+    comfy.model_management.unload_all_models()
+
+    page_bytes = 32 * 1024 * 1024
+    total_vbar_freed = 0
+    seen_vbars = set()
+    for p in patchers:
+        if p is None:
+            continue
+        try:
+            vbar = p._vbar_get() if hasattr(p, "_vbar_get") else None
+            if vbar is None or id(vbar) in seen_vbars:
+                continue
+            seen_vbars.add(id(vbar))
+            for _ in range(128):
+                res = vbar.get_residency()
+                pinned = [idx for idx, flag in enumerate(res) if (flag & 2)]
+                if not pinned:
+                    break
+                for idx in pinned:
+                    vbar.unpin(vbar.base_addr + idx * page_bytes, page_bytes)
+            total_vbar_freed += vbar.free_memory(32 * 1024**3)
+        except Exception as e:
+            print(f"[_purge_vram_and_vbars] vbar free warning: {e}")
+
+    gc.collect()
+    comfy.model_management.soft_empty_cache()
+
+
+_ORIG_COMFY_SAMPLE = getattr(comfy.sample, "_aseprite_orig_sample", comfy.sample.sample)
+comfy.sample._aseprite_orig_sample = _ORIG_COMFY_SAMPLE
+
+
+_ACTIVE_TRAJ_LATENT = None
+
+
+def _aseprite_guarded_sample(model, *args, **kwargs):
+    """Prevents 16GB VRAM WDDM thrashing across QwenImage, Anima, WAN21 (HighNoise + LowNoise), and WanVAE,
+    and guides WAN21 along the 9-frame OpenPose trajectory without FLF mask haze.
+    """
+    global _ACTIVE_TRAJ_LATENT
+    cur_cls = ""
+    try:
+        cur_cls = model.model.__class__.__name__ if hasattr(model, "model") else ""
+        if cur_cls in ("Anima", "QwenImage", "WAN21"):
+            other_loaded = [
+                lm.model
+                for lm in getattr(comfy.model_management, "current_loaded_models", [])
+                if getattr(lm, "model", None) is not None and lm.model is not model
+            ]
+            if other_loaded:
+                other_names = [m.model.__class__.__name__ for m in other_loaded if hasattr(m, "model")]
+                print(f"[VRAM Guard] Evicting leftover {other_names} vbars before sampling {cur_cls}...")
+                _purge_vram_and_vbars(*other_loaded)
+    except Exception as e:
+        print(f"[VRAM Guard] pre-sample warning: {e}")
+
+    # When _ACTIVE_TRAJ_LATENT is present (9-frame OpenPose trajectory encoded by WanVAE):
+    # - HighNoise WAN21 (force_full_denoise=False): return _ACTIVE_TRAJ_LATENT directly (saves 13.86GB VRAM swap + 15s!)
+    # - LowNoise WAN21 (force_full_denoise=True): initialize directly from _ACTIVE_TRAJ_LATENT at sigma=0.36 -> 0.18 -> 0.0
+    #   using proper Flow Matching noise_scaling across all frames, with zero post-sample averaging (zero ghosting/double-exposure!)
+    if cur_cls == "WAN21" and _ACTIVE_TRAJ_LATENT is not None and len(args) >= 8:
+        lat_in = args[7]
+        if isinstance(lat_in, torch.Tensor) and lat_in.shape == _ACTIVE_TRAJ_LATENT.shape and lat_in.shape[2] >= 2:
+            if not kwargs.get("force_full_denoise", False):
+                print("[WanImageToVideo Pose Driver] Using 9-frame OpenPose trajectory latent for coarse stage (bypassing HighNoise WAN21).")
+                return _ACTIVE_TRAJ_LATENT.to(device=lat_in.device, dtype=lat_in.dtype).clone()
+            else:
+                try:
+                    zt = _ACTIVE_TRAJ_LATENT.to(device=lat_in.device, dtype=lat_in.dtype).clone()
+                    seed_val = kwargs.get("seed") or 777001
+                    fresh_noise = comfy.sample.prepare_noise(zt, int(seed_val))
+                    args = list(args)
+                    args[0] = fresh_noise
+                    args[7] = zt
+                    args = tuple(args)
+                    kwargs["sigmas"] = torch.FloatTensor([0.36, 0.18, 0.0])
+                    kwargs["start_step"] = None
+                    kwargs["last_step"] = None
+                    print("[WanImageToVideo Pose Driver] Refining 9-frame OpenPose trajectory with LowNoise WAN21 (sigmas=[0.36, 0.18, 0.0]).")
+                except Exception as e:
+                    print(f"[WanImageToVideo Pose Driver] LowNoise init warning: {e}")
+
+    res = _ORIG_COMFY_SAMPLE(model, *args, **kwargs)
+    # Immediately after final WAN21 step (LowNoise step 2..4), free 13.86GB WAN21 vbars so VAEDecodeTiled never stalls!
+    try:
+        if cur_cls == "WAN21" and kwargs.get("force_full_denoise", False):
+            _purge_vram_and_vbars(model)
+            print("[VRAM Guard] Freed WAN21 LowNoise vbars immediately before VAEDecodeTiled.")
+    except Exception as e:
+        print(f"[VRAM Guard] post-sample warning: {e}")
+    return res
+
+
+comfy.sample.sample = _aseprite_guarded_sample
+
+# Hook comfy.sd.VAE.encode to detect WanImageToVideo's [start_image, 0.5, 0.5, ...] batch and encode the 9-frame OpenPose trajectory!
+try:
+    _ORIG_VAE_ENCODE = getattr(comfy.sd.VAE, "_aseprite_orig_encode", comfy.sd.VAE.encode)
+    comfy.sd.VAE._aseprite_orig_encode = _ORIG_VAE_ENCODE
+
+    def _aseprite_vae_encode(self, pixels):
+        global _ACTIVE_TRAJ_LATENT
+        try:
+            if isinstance(pixels, torch.Tensor) and pixels.ndim == 4 and pixels.shape[0] >= 5:
+                if float((pixels[1:] - 0.5).abs().max().item()) < 1e-4:
+                    _ACTIVE_TRAJ_LATENT = None
+                    pose_id = _ACTIVE_POSE_ID
+                    lib = _load_pose_library()
+                    meta = lib.get(pose_id, {}) if (pose_id and pose_id != "none") else {}
+                    start_kps_list = meta.get("start_kps") or []
+                    peak_kps_list = meta.get("peak_kps") or []
+                    if start_kps_list and peak_kps_list:
+                        length = int(pixels.shape[0])
+                        s_np = (pixels[0, :, :, :3].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+                        up = _ACTIVE_USER_PROMPT
+                        m_scale = 1.15 if any(k in up for k in ("起伏", "骑乘", "抽插", "弹跳", "摇晃")) or any(k in pose_id for k in ("squat", "cowgirl", "doggy", "mating", "arch")) else 0.75
+                        frames_np = []
+                        for i in range(length):
+                            t_val = 0.5 * (1.0 - math.cos(math.pi * i / max(1, length - 1)))
+                            w_np = _warp_image_by_pose_kps(s_np, start_kps_list, peak_kps_list, t=t_val, motion_scale=m_scale)
+                            frames_np.append(torch.from_numpy(w_np.astype(np.float32) / 255.0))
+                        traj_pixels = torch.stack(frames_np, dim=0).to(device=pixels.device, dtype=pixels.dtype)
+                        _ACTIVE_TRAJ_LATENT = _ORIG_VAE_ENCODE(self, traj_pixels).detach().cpu()
+                        print(f"[WanImageToVideo Pose Driver] Encoded {length}-frame OpenPose trajectory ({pose_id}, scale={m_scale}) for Wan2.2 motion guidance.")
+        except Exception as e:
+            print(f"[WanImageToVideo Pose Driver] vae encode hook warning: {e}")
+        return _ORIG_VAE_ENCODE(self, pixels)
+
+    comfy.sd.VAE.encode = _aseprite_vae_encode
+except Exception as e:
+    print(f"[WanImageToVideo Pose Driver] hook warning: {e}")
+class QwenEditFastConditioning:
+    """Fast I2I conditioning node for Qwen-Image-Edit-2511 on 16GB VRAM.
+
+    Fixes three major bottlenecks in standard TextEncodeQwenImageEditPlus:
+    1. Runs Qwen2.5-VL-7B (8.74 GiB) only ONCE (creates negative via zero-out for CFG=1.0 4-step Lightning).
+    2. Scales reference_latents to ref_max_side (default 512 instead of hardcoded 1024x1024), cutting
+       reference latent token count by ~4x across all 60 transformer blocks.
+    3. Sets reference_latents_method='index_timestep_zero' and immediately unloads Qwen2.5-VL-7B from
+       16GB VRAM before KSampler loads the 20B Qwen-Image-Edit UNet.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "clip": ("CLIP",),
+                "vae": ("VAE",),
+                "image1": ("IMAGE",),
+                "prompt": ("STRING", {"multiline": True, "default": ""}),
+                "width": ("INT", {"default": 512, "min": 256, "max": 1536, "step": 16}),
+                "height": ("INT", {"default": 768, "min": 256, "max": 1536, "step": 16}),
+            },
+            "optional": {
+                "image2": ("IMAGE",),
+                "model": ("MODEL",),
+            },
+        }
+
+    RETURN_TYPES = ("CONDITIONING", "CONDITIONING", "LATENT", "MODEL")
+    RETURN_NAMES = ("positive", "negative", "latent", "model")
+    FUNCTION = "encode_fast"
+    CATEGORY = "pixel_art/aseprite"
+
+    def encode_fast(
+        self,
+        clip,
+        vae,
+        image1,
+        prompt,
+        width=512,
+        height=768,
+        ref_max_side=576,
+        unload_vl_after_encode=True,
+        image2=None,
+        model=None,
+        **kwargs,
+    ):
+        if unload_vl_after_encode:
+            # Purge any previous QwenImage (11GB) or Wan2.2 (15GB) dynamic vbars before loading Qwen2.5-VL-7B (7.9GB)
+            _purge_vram_and_vbars()
+        ref_latents = []
+        images_vl = []
+        llama_template = (
+            "<|im_start|>system\nDescribe the key features of the input image (color, shape, size, texture, objects, background), "
+            "then explain how the user's text instruction should alter or modify the image. Generate a new image that meets the "
+            "user's requirements while maintaining consistency with the original input where appropriate.<|im_end|>\n"
+            "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n"
+        )
+        image_prompt = ""
+
+        for i, img in enumerate([image1, image2]):
+            if img is None:
+                continue
+            samples = img[:1].movedim(-1, 1)
+            h_in, w_in = samples.shape[2], samples.shape[3]
+            is_pose_skeleton = (i == 1) and (float(samples.mean().item()) < 0.18)
+
+            # If image2 is a black-background OpenPose skeleton, convert black bg to white for Qwen2.5-VL
+            # and DO NOT add it to VAE reference_latents (prevents black latent pollution of background/colors!)
+            samples_vl = samples
+            if is_pose_skeleton:
+                s_hwc = samples.movedim(1, -1).clone()
+                bg_m = s_hwc[:, :, :, :3].max(dim=-1, keepdim=True)[0] < 0.08
+                s_hwc[:, :, :, :3] = torch.where(bg_m, torch.ones_like(s_hwc[:, :, :, :3]), s_hwc[:, :, :, :3])
+                samples_vl = s_hwc.movedim(-1, 1)
+
+            # 1. Vision tower input (~504x504 area, aligned to 28px ViT patch grid for sharper identity retention)
+            scale_vl = math.sqrt((504 * 504) / (w_in * h_in))
+            w_vl = max(28, round(w_in * scale_vl / 28.0) * 28)
+            h_vl = max(28, round(h_in * scale_vl / 28.0) * 28)
+            s_vl = comfy.utils.common_upscale(samples_vl, w_vl, h_vl, "area", "disabled")
+            images_vl.append(s_vl.movedim(1, -1)[:, :, :, :3])
+
+            # 2. VAE reference latent (uses white-bg skeleton samples_vl so pose keypoints align spatially without dark bg pollution)
+            scale_ref = min(1.0, float(ref_max_side) / float(max(w_in, h_in)))
+            w_ref = max(64, round(w_in * scale_ref / 16.0) * 16)
+            h_ref = max(64, round(h_in * scale_ref / 16.0) * 16)
+            s_ref = comfy.utils.common_upscale(samples_vl, w_ref, h_ref, "area", "disabled")
+            ref_latents.append(vae.encode(s_ref.movedim(1, -1)[:, :, :, :3]))
+            image_prompt += f"Picture {i + 1}: <|vision_start|><|image_pad|><|vision_end|>"
+        tokens = clip.tokenize(image_prompt + prompt, images=images_vl, llama_template=llama_template)
+        positive = clip.encode_from_tokens_scheduled(tokens)
+
+        if len(ref_latents) > 0:
+            positive = node_helpers.conditioning_set_values(
+                positive,
+                {
+                    "reference_latents": ref_latents,
+                    "reference_latents_method": "index_timestep_zero",
+                },
+                append=True,
+            )
+
+        # Zero out negative conditioning for CFG=1.0 4-step Lightning (avoids 2nd VL + VAE pass)
+        negative = []
+        for t in positive:
+            d = t[1].copy()
+            pooled = d.get("pooled_output", None)
+            if pooled is not None:
+                d["pooled_output"] = torch.zeros_like(pooled)
+            conditioning_lyrics = d.get("conditioning_lyrics", None)
+            if conditioning_lyrics is not None:
+                d["conditioning_lyrics"] = torch.zeros_like(conditioning_lyrics)
+            negative.append([torch.zeros_like(t[0]), d])
+
+        if unload_vl_after_encode:
+            _purge_vram_and_vbars(getattr(clip, "patcher", None), getattr(vae, "patcher", None))
+            print("[QwenEditFastConditioning] Unloaded Qwen2.5-VL-7B + vbars from VRAM before Qwen-Edit KSampler.")
+
+        if model is not None and hasattr(model, "model"):
+            # QwenImage.memory_required overestimates CFG=2 BF16 activation memory (~8GB),
+            # and comfy-aimdo detours cuMemGetInfo to cap single-shot free VRAM at ~8.8GB when loaded_memory=0.
+            # Capping memory_required at 1.2GB (and preloading non-dynamic GGUF models with force_full_load=True)
+            # ensures all weights stay 100% resident in 16GB VRAM.
+            model.model.memory_required = lambda *a, **kw: 1200 * 1024 * 1024
+            is_dyn = hasattr(model, "is_dynamic") and model.is_dynamic()
+            if unload_vl_after_encode and not is_dyn:
+                comfy.model_management.load_models_gpu([model], force_full_load=True)
+        latent = torch.zeros([1, 16, 1, int(height) // 8, int(width) // 8], device=comfy.model_management.intermediate_device())
+        return (positive, negative, {"samples": latent}, model)
+
+class AsepriteCharcardExtractor:
+    """Extracts and saves a reusable charcard_<name>.json from any reference character image
+    using local WD14 ONNX (full-body + zoomed head crop) + optional Multimodal Vision LLM.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "reference_image": ("IMAGE",),
+                "char_name": ("STRING", {"default": "custom_char"}),
+                "use_llm": ("BOOLEAN", {"default": True}),
+                "base_url": ("STRING", {"default": DEFAULT_LLM_BASE_URL}),
+                "api_key": ("STRING", {"default": ""}),
+                "model": (_get_cached_models(), {"default": _get_cached_models()[0]}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("charcard_filename", "anima_tags", "anima_nsfw_tags", "wan_subject", "charcard_json")
+    FUNCTION = "extract"
+    CATEGORY = "pixel_art/aseprite"
+
+    def extract(self, reference_image, char_name="custom_char", use_llm=True, base_url="", api_key="", model=""):
+        from scripts.extract_charcard import extract_charcard
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", (char_name or "custom_char").strip()).strip("_") or "custom_char"
+        arr = (reference_image[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
+        card_data, out_fname = extract_charcard(
+            Image.fromarray(arr[:, :, :3], "RGB"),
+            card_name=safe_name,
+            use_llm=use_llm,
+            base_url=base_url,
+            api_key=_resolve_api_key(api_key),
+            model=model,
+            save_to_disk=True,
+        )
+        return (
+            out_fname,
+            card_data.get("anima_tags", ""),
+            card_data.get("anima_nsfw_tags", ""),
+            card_data.get("wan_subject", ""),
+            json.dumps(card_data, indent=2, ensure_ascii=False),
+        )
+
+
+class AsepriteNSFWPoseLibrary:
+    """Provides 10 built-in solo & two-character interactive NSFW OpenPose skeleton guides
+    and 9-frame half-cycle motion sequences for Stage 1 & Stage 2 pose/motion control.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        choices = _get_pose_preset_choices()
+        default_val = choices[1] if len(choices) > 1 else choices[0]
+        return {
+            "required": {
+                "pose_preset": (choices, {"default": default_val}),
+                "enable_pose_control": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        return True
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("pose_image",)
+    FUNCTION = "get_pose"
+    CATEGORY = "pixel_art/aseprite"
+
+    def _load_img_tensor(self, path: str):
+        im = Image.open(path).convert("RGB")
+        arr = np.array(im).astype(np.float32) / 255.0
+        return torch.from_numpy(arr).unsqueeze(0)
+
+    def get_pose(self, pose_preset="solo_m_legs_sit (单人·M字开腿坐地抚腿娇喘)", enable_pose_control=True, **kwargs):
+        global _ACTIVE_POSE_ID
+        pose_id = (pose_preset or "none").split(" ")[0].strip()
+        _ACTIVE_POSE_ID = pose_id if enable_pose_control else "none"
+        lib = _load_pose_library()
+        meta = lib.get(pose_id, {})
+        if not enable_pose_control or pose_id == "none" or not meta:
+            return (None,)
+        start_p = os.path.join(PROJECT_ROOT, meta["start_png"])
+        return (self._load_img_tensor(start_p),)
+
+
+
+
+class AsepritePoseRegionMask:
+    """Builds a feathered inpaint MASK from detected DWPose/OpenPose body keypoints (POSE_KEYPOINT).
+
+    Regions are placed from the keypoints actually detected on the image, for every detected person, so the mask
+    follows any reference character, pose orientation, or person count. Pair with SetLatentNoiseMask + KSampler.
+    Body keypoint order (OpenPose-18): 1 neck, 2 r_sho, 5 l_sho, 8 r_hip, 9 r_kne, 11 l_hip, 12 l_kne.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "pose_kps": ("POSE_KEYPOINT",),
+                "pelvis": ("BOOLEAN", {"default": True}),
+                "chest": ("BOOLEAN", {"default": False}),
+                "size": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05,
+                                   "tooltip": "Scales every region ellipse"}),
+                "feather": ("INT", {"default": 8, "min": 0, "max": 64}),
+            },
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "build"
+    CATEGORY = "pixel_art/aseprite"
+
+    def build(self, pose_kps, pelvis=True, chest=False, size=1.0, feather=8):
+        frame = pose_kps[0]
+        W, H = int(frame["canvas_width"]), int(frame["canvas_height"])
+        mask = Image.new("L", (W, H), 0)
+        draw = ImageDraw.Draw(mask)
+        for person in frame.get("people", []):
+            k = np.array(person.get("pose_keypoints_2d") or [], dtype=np.float32).reshape(-1, 3)
+            if k.shape[0] < 13:
+                continue
+            if k[:, :2].max() <= 1.0:
+                k[:, 0] *= W
+                k[:, 1] *= H
+
+            def pt(i):
+                return k[i, :2] if k[i, 2] > 0 else None
+
+            neck, r_sho, l_sho = pt(1), pt(2), pt(5)
+            r_hip, r_kne, l_hip, l_kne = pt(8), pt(9), pt(11), pt(12)
+            if r_hip is None or l_hip is None:
+                continue
+            hip_mid = 0.5 * (r_hip + l_hip)
+            hip_w = max(float(np.linalg.norm(r_hip - l_hip)), 1.0)
+            torso = float(np.linalg.norm(hip_mid - neck)) if neck is not None else 2.5 * hip_w
+            if pelvis:
+                # Crotch/shorts sit past the hip line along the body axis (neck -> hips). Knees are NOT used for
+                # placement: in squats/M-legs they are level with or above the hips and pulled the region upward.
+                down = (hip_mid - neck) / max(torso, 1.0) if neck is not None else np.array([0.0, 1.0], dtype=np.float32)
+                c = hip_mid + down * 0.22 * torso
+                rx, ry = 0.95 * hip_w * size, 0.38 * torso * size
+                draw.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=255)
+            if chest and neck is not None:
+                c = 0.62 * neck + 0.38 * hip_mid
+                sho_w = float(np.linalg.norm(r_sho - l_sho)) if (r_sho is not None and l_sho is not None) else 1.6 * hip_w
+                rx, ry = 0.55 * sho_w * size, 0.24 * torso * size
+                draw.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=255)
+        if feather > 0:
+            mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
+        return (torch.from_numpy(np.array(mask).astype(np.float32) / 255.0).unsqueeze(0),)
+
+
+WEB_DIRECTORY = "./web"
+
+NODE_CLASS_MAPPINGS = {
+    "AsepritePixelizeAssemble": AsepritePixelizeAssemble,
+    "AsepriteStageBridge": AsepriteStageBridge,
+    "AsepriteLLMPromptDirector": AsepriteLLMPromptDirector,
+    "QwenEditFastConditioning": QwenEditFastConditioning,
+    "AsepriteCharcardExtractor": AsepriteCharcardExtractor,
+    "AsepriteNSFWPoseLibrary": AsepriteNSFWPoseLibrary,
+    "AsepritePoseRegionMask": AsepritePoseRegionMask,
+}
+
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "AsepritePixelizeAssemble": "Aseprite Pixelize & Assemble (.aseprite + GIF)",
+    "AsepriteStageBridge": "Stage 1->2 Bridge (Free Anima VRAM)",
+    "AsepriteLLMPromptDirector": "LLM Prompt Director (Anima + Wan2.2)",
+    "QwenEditFastConditioning": "Qwen-Edit Fast I2I Encode (1x VL + Free VRAM)",
+    "AsepriteCharcardExtractor": "Aseprite Role Card Extractor (WD14 + Vision LLM)",
+    "AsepriteNSFWPoseLibrary": "NSFW Pose & Motion Library (OpenPose Control)",
+    "AsepritePoseRegionMask": "Pose Region Mask (DWPose keypoints → inpaint mask)",
+}
