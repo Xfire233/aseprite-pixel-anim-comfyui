@@ -222,18 +222,20 @@ def desensitize_pose_prompt(raw_prompt: str) -> str:
     return clean if clean else "sitting on floor in an M-shaped spread legs pose, hands on thighs"
 
 
-def heuristic_fallback_pose(action_prompt: str) -> Tuple[List[List[float]], List[List[float]], str]:
+def heuristic_fallback_pose(action_prompt: str, seed: int = 0) -> Tuple[List[List[float]], List[List[float]], str]:
     """Deterministic kinematic heuristic fallback when LLM fails or gets safety-blocked.
     Parses prompt keywords, selects baseline pose from nsfw_library/index.json,
     and tweaks hand/limb coordinates accordingly. Never crashes.
     """
-    import os
+    import os, math
     base_dir = os.path.dirname(os.path.abspath(__file__))
     lib_path = os.path.join(base_dir, "poses", "nsfw_library", "index.json")
 
     preset_key = "solo_m_legs_sit"
     p_low = action_prompt.lower()
-    if any(w in p_low for w in ["跪", "四肢", "狗爬", "后入", "趴"]):
+    if any(w in p_low for w in ["跪", "口交", "含入", "含住", "嘴前", "吹箫", "吞吐"]):
+        preset_key = "solo_kneeling_arch"
+    elif any(w in p_low for w in ["四肢", "狗爬", "后入", "趴"]):
         preset_key = "solo_all_fours_doggy"
     elif any(w in p_low for w in ["骑乘", "深蹲", "蹲"]):
         preset_key = "solo_squat_cowgirl"
@@ -279,20 +281,47 @@ def heuristic_fallback_pose(action_prompt: str) -> Tuple[List[List[float]], List
 
     kps_dict = {k: list(v) for k, v in kps_dict.items()}
 
-    # Dynamic wrist positioning based on user action intent
-    if any(w in p_low for w in ["左手揉胸", "左手摸胸", "左手托胸", "左手抓胸"]):
-        kps_dict["l_wri"] = [0.52, 0.43]
-        kps_dict["l_elb"] = [0.66, 0.42]
-    elif any(w in p_low for w in ["左手伸入下体", "左手摸下体", "左手下体", "左手自慰", "左手私处", "左手裆部"]):
-        kps_dict["l_wri"] = [0.50, 0.62]
-        kps_dict["l_elb"] = [0.62, 0.52]
+    # Dynamic wrist & arm positioning based on user action intent
+    # 1. Oral sex / hands raised in front of mouth
+    if any(w in p_low for w in ["嘴前", "含入", "口交", "含住", "握住肉棒", "举在嘴前", "双手在嘴", "吞吐", "嘴唇"]):
+        kps_dict["l_wri"] = [0.52, 0.35]
+        kps_dict["r_wri"] = [0.48, 0.37]
+        kps_dict["l_elb"] = [0.60, 0.40]
+        kps_dict["r_elb"] = [0.40, 0.42]
+        kps_dict["nose"] = [0.50, 0.26]
+    # 2. General arms raised
+    elif any(w in p_low for w in ["抬手", "举手", "双手抬起", "举起双手", "手抬起来"]):
+        kps_dict["l_wri"] = [0.60, 0.22]
+        kps_dict["r_wri"] = [0.40, 0.22]
+        kps_dict["l_elb"] = [0.65, 0.32]
+        kps_dict["r_elb"] = [0.35, 0.32]
+    else:
+        # Breast fondling
+        if any(w in p_low for w in ["左手揉胸", "左手摸胸", "左手托胸", "左手抓胸", "揉胸", "摸胸"]):
+            kps_dict["l_wri"] = [0.52, 0.43]
+            kps_dict["l_elb"] = [0.66, 0.42]
+        if any(w in p_low for w in ["右手揉胸", "右手摸胸", "右手托胸", "右手抓胸"]):
+            kps_dict["r_wri"] = [0.48, 0.43]
+            kps_dict["r_elb"] = [0.34, 0.42]
 
-    if any(w in p_low for w in ["右手揉胸", "右手摸胸", "右手托胸", "右手抓胸"]):
-        kps_dict["r_wri"] = [0.48, 0.43]
-        kps_dict["r_elb"] = [0.34, 0.42]
-    elif any(w in p_low for w in ["右手伸入下体", "右手摸下体", "右手下体", "右手自慰", "右手私处", "右手裆部"]):
-        kps_dict["r_wri"] = [0.50, 0.62]
-        kps_dict["r_elb"] = [0.38, 0.52]
+        # Crotch / masturbation
+        if any(w in p_low for w in ["左手伸入下体", "左手摸下体", "左手下体", "左手自慰", "左手私处", "左手裆部"]):
+            kps_dict["l_wri"] = [0.50, 0.62]
+            kps_dict["l_elb"] = [0.62, 0.52]
+        if any(w in p_low for w in ["右手伸入下体", "右手摸下体", "右手下体", "右手自慰", "右手私处", "右手裆部", "自慰", "摸下体"]):
+            kps_dict["r_wri"] = [0.50, 0.62]
+            kps_dict["r_elb"] = [0.38, 0.52]
+
+    # Deterministic subtle seed variation so re-rolling produces distinct poses
+    if seed != 0:
+        dx = float(math.sin(float(seed) * 1.7) * 0.02)
+        dy = float(math.cos(float(seed) * 2.3) * 0.015)
+        if "l_wri" in kps_dict:
+            kps_dict["l_wri"][0] = max(0.05, min(0.95, kps_dict["l_wri"][0] + dx))
+            kps_dict["l_wri"][1] = max(0.05, min(0.95, kps_dict["l_wri"][1] + dy))
+        if "r_wri" in kps_dict:
+            kps_dict["r_wri"][0] = max(0.05, min(0.95, kps_dict["r_wri"][0] - dx))
+            kps_dict["r_wri"][1] = max(0.05, min(0.95, kps_dict["r_wri"][1] + dy))
 
     start_kps = [[kps_dict.get(j, [0.5, 0.5])[0], kps_dict.get(j, [0.5, 0.5])[1], 1.0] for j in JOINT_NAMES]
     start_kps = enforce_anatomical_constraints(start_kps)
@@ -301,5 +330,5 @@ def heuristic_fallback_pose(action_prompt: str) -> Tuple[List[List[float]], List
     peak_kps[1][1] = max(0.05, peak_kps[1][1] - 0.015)
     peak_kps = enforce_anatomical_constraints(peak_kps)
 
-    summary = f"Synthesized pose from {preset_key} with kinematic adjustments: {action_prompt[:60]}"
+    summary = f"Synthesized pose from {preset_key} (seed {seed}): {action_prompt[:60]}"
     return start_kps, peak_kps, summary

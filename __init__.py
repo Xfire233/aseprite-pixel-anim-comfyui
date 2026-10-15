@@ -513,6 +513,7 @@ class AsepriteLLMPoseGenerator:
                 "height": ("INT", {"default": 768, "min": 256, "max": 1536, "step": 16}),
                 "bg_color": (["white", "black"], {"default": "white"}),
                 "enforce_constraints": ("BOOLEAN", {"default": True, "tooltip": "开启前置解剖学刚性拓扑约束，钳位防止肢体反折或脱臼"}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "tooltip": "随机种子；改变或随机化即可重新生成全新的骨骼姿态坐标"}),
             },
             "optional": {
                 "llm_client": ("LLM_CLIENT",),
@@ -520,12 +521,16 @@ class AsepriteLLMPoseGenerator:
             }
         }
 
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return kwargs.get("seed", float("nan"))
+
     RETURN_TYPES = ("IMAGE", "POSE_KEYPOINT", "STRING")
     RETURN_NAMES = ("pose_images", "pose_keypoints", "pose_summary")
     FUNCTION = "generate"
     CATEGORY = "pixel_art/aseprite"
 
-    def generate(self, action_prompt, num_frames=1, motion_mode="pingpong", width=512, height=768, bg_color="white", enforce_constraints=True, llm_client=None, model_override=""):
+    def generate(self, action_prompt, num_frames=1, motion_mode="pingpong", width=512, height=768, bg_color="white", enforce_constraints=True, seed=0, llm_client=None, model_override=""):
         from pose_generator import (
             SYS_PROMPT_POSE_GEN,
             desensitize_pose_prompt,
@@ -541,13 +546,15 @@ class AsepriteLLMPoseGenerator:
             client = LLMClient(base_url=DEFAULT_LLM_BASE_URL, api_key="", default_model=_get_cached_models()[0])
 
         clean_prompt = desensitize_pose_prompt(action_prompt)
-        print(f"[AsepriteLLMPoseGenerator] Raw action: '{action_prompt[:60]}' -> Kinematic: '{clean_prompt[:60]}'")
+        print(f"[AsepriteLLMPoseGenerator] (seed {seed}) Raw action: '{action_prompt[:60]}' -> Kinematic: '{clean_prompt[:60]}'")
 
         try:
+            temp = 0.15 + (int(seed) % 1000) * 0.0003
             data = client.request_json(
                 sys_prompt=SYS_PROMPT_POSE_GEN,
                 user_prompt=clean_prompt,
                 model_override=model_override,
+                temperature=temp,
             )
             start_kps = data.get("start_kps", [])
             peak_kps = data.get("peak_kps", start_kps)
@@ -556,11 +563,9 @@ class AsepriteLLMPoseGenerator:
                 raise ValueError(f"LLM returned incomplete keypoints ({len(start_kps)} points)")
         except Exception as e:
             print(f"[AsepriteLLMPoseGenerator] LLM synthesis blocked/failed ({e}); engaged kinematic heuristic fallback.")
-            start_kps, peak_kps, summary = heuristic_fallback_pose(action_prompt)
+            start_kps, peak_kps, summary = heuristic_fallback_pose(action_prompt, seed=int(seed))
             start_kps = enforce_anatomical_constraints(start_kps)
             peak_kps = enforce_anatomical_constraints(peak_kps)
-
-        seq_kps = interpolate_pose_sequence(start_kps, peak_kps, num_frames=max(1, int(num_frames)), mode=motion_mode)
 
         tensors = []
         for frame_kps in seq_kps:

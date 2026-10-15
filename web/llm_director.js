@@ -256,48 +256,95 @@ app.registerExtension({
             return;
         }
 
+        if (nodeData.name === "AsepriteLLMPoseGenerator") {
+            const addPoseButtons = (node) => {
+                if (node._poseButtonsAdded) return;
+                node._poseButtonsAdded = true;
+                node.addWidget("button", "🎲 重新生成 / 重摇 Pose 动作骨骼", null, () => {
+                    const seedW = node.widgets?.find((w) => w.name === "seed");
+                    if (seedW) {
+                        seedW.value = Math.floor(Math.random() * 1e14);
+                        if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                    }
+                    app.graph.setDirtyCanvas(true, true);
+                    app.queuePrompt(0);
+                }).serialize = false;
+            };
+            const origCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = origCreated ? origCreated.apply(this, arguments) : undefined;
+                addPoseButtons(this);
+                return r;
+            };
+            const origConf = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const r = origConf ? origConf.apply(this, arguments) : undefined;
+                addPoseButtons(this);
+                return r;
+            };
+            return;
+        }
+
         if (nodeData.name === "AsepriteStageBridge") {
             const addBridgeButtons = (node) => {
                 if (node._bridgeButtonsAdded) return;
                 node._bridgeButtonsAdded = true;
+
+                const lockSamplersExcept = (targetIds) => {
+                    app.graph?._nodes?.forEach((n) => {
+                        if (!targetIds.includes(Number(n.id)) && (n.type?.includes("KSampler") || n.title?.includes("采样") || n.title?.includes("阶段 1") || n.title?.includes("阶段 2"))) {
+                            n.widgets?.forEach((w) => {
+                                if (w.name === "control_after_generate" || w.value === "randomize") {
+                                    w.value = "fixed";
+                                    if (typeof w.callback === "function") w.callback("fixed");
+                                }
+                            });
+                        }
+                    });
+                };
+
+                node.addWidget("button", "🎲 仅重摇 Pose 动作骨骼", null, () => {
+                    lockSamplersExcept([]);
+                    const node65 = app.graph?._nodes?.find((n) => n.id == 65 || n.type === "AsepriteLLMPoseGenerator");
+                    if (node65) {
+                        const seedW = node65.widgets?.find((w) => w.name === "seed");
+                        if (seedW) {
+                            seedW.value = Math.floor(Math.random() * 1e14);
+                            if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                        }
+                    }
+                    app.graph.setDirtyCanvas(true, true);
+                    app.queuePrompt(0);
+                }).serialize = false;
+
                 node.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
-                    // Lock Stage 1A (Node 7 Qwen-Edit) so it does NOT randomize seed
-                    const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
-                    if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
-                        node7.widgets[1].value = "fixed";
-                    }
-                    // Randomize ONLY Stage 1B (Node 53 Anima)
-                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                    // In i2i: target is 53; in anima: target is 7
+                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.id == 7 && n.title?.includes("Anima")) || (n.type === "KSampler" && n.title?.includes("1B")));
                     if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
+                        lockSamplersExcept([Number(node1B.id)]);
                         node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
+                        if (typeof node1B.widgets[0].callback === "function") node1B.widgets[0].callback(node1B.widgets[0].value);
+                        const ctrlW = node1B.widgets.find((w) => w.name === "control_after_generate");
+                        if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
                     } else {
-                        alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                        alert("未找到 Anima KSampler 节点！");
                         return;
-                    }
-                    // Lock Stage 2 (Node 23 Wan2.2) so it does not randomize seed
-                    const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
-                    if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 2) {
-                        node2.widgets[2].value = "fixed";
                     }
                     app.graph.setDirtyCanvas(true, true);
                     app.queuePrompt(0);
                 }).serialize = false;
 
                 node.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
-                    // Lock Stage 1A (Node 7 Qwen-Edit)
-                    const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
-                    if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
-                        node7.widgets[1].value = "fixed";
-                    }
-                    // Lock Stage 1B (Node 53 Anima)
-                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
-                    if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 1) {
-                        node1B.widgets[1].value = "fixed";
-                    }
-                    // Randomize ONLY Stage 2 (Node 23 Wan2.2)
+                    lockSamplersExcept([23, 24]);
                     const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
                     if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
-                        node2.widgets[1].value = Math.floor(Math.random() * 1e14);
+                        const seedW = node2.widgets.find((w) => w.name === "noise_seed" || w.name === "seed") || node2.widgets[1];
+                        if (seedW) {
+                            seedW.value = Math.floor(Math.random() * 1e14);
+                            if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                        }
+                        const ctrlW = node2.widgets.find((w) => w.name === "control_after_generate");
+                        if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
                         app.graph.setDirtyCanvas(true, true);
                         app.queuePrompt(0);
                     } else {
@@ -555,21 +602,45 @@ app.registerExtension({
                 }
             });
             tplBtn.serialize = false;
+            const lockSamplersExcept = (targetIds) => {
+                app.graph?._nodes?.forEach((n) => {
+                    if (!targetIds.includes(Number(n.id)) && (n.type?.includes("KSampler") || n.title?.includes("采样") || n.title?.includes("阶段 1") || n.title?.includes("阶段 2"))) {
+                        n.widgets?.forEach((w) => {
+                            if (w.name === "control_after_generate" || w.value === "randomize") {
+                                w.value = "fixed";
+                                if (typeof w.callback === "function") w.callback("fixed");
+                            }
+                        });
+                    }
+                });
+            };
+
+            const r0Btn = this.addWidget("button", "🎲 仅重摇 Pose 动作骨骼", null, () => {
+                lockSamplersExcept([]);
+                const node65 = app.graph?._nodes?.find((n) => n.id == 65 || n.type === "AsepriteLLMPoseGenerator");
+                if (node65) {
+                    const seedW = node65.widgets?.find((w) => w.name === "seed");
+                    if (seedW) {
+                        seedW.value = Math.floor(Math.random() * 1e14);
+                        if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                    }
+                }
+                app.graph.setDirtyCanvas(true, true);
+                app.queuePrompt(0);
+            });
+            r0Btn.serialize = false;
+
             const r1bBtn = this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
-                const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
-                if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
-                    node7.widgets[1].value = "fixed";
-                }
-                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.id == 7 && n.title?.includes("Anima")) || (n.type === "KSampler" && n.title?.includes("1B")));
                 if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
+                    lockSamplersExcept([Number(node1B.id)]);
                     node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
+                    if (typeof node1B.widgets[0].callback === "function") node1B.widgets[0].callback(node1B.widgets[0].value);
+                    const ctrlW = node1B.widgets.find((w) => w.name === "control_after_generate");
+                    if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
                 } else {
-                    alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                    alert("未找到 Anima KSampler 节点！");
                     return;
-                }
-                const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
-                if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 2) {
-                    node2.widgets[2].value = "fixed";
                 }
                 app.graph.setDirtyCanvas(true, true);
                 app.queuePrompt(0);
@@ -577,17 +648,16 @@ app.registerExtension({
             r1bBtn.serialize = false;
 
             const r2Btn = this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
-                const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
-                if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
-                    node7.widgets[1].value = "fixed";
-                }
-                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
-                if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 1) {
-                    node1B.widgets[1].value = "fixed";
-                }
+                lockSamplersExcept([23, 24]);
                 const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
                 if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
-                    node2.widgets[1].value = Math.floor(Math.random() * 1e14);
+                    const seedW = node2.widgets.find((w) => w.name === "noise_seed" || w.name === "seed") || node2.widgets[1];
+                    if (seedW) {
+                        seedW.value = Math.floor(Math.random() * 1e14);
+                        if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                    }
+                    const ctrlW = node2.widgets.find((w) => w.name === "control_after_generate");
+                    if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
                     app.graph.setDirtyCanvas(true, true);
                     app.queuePrompt(0);
                 } else {

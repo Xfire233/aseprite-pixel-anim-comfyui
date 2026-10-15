@@ -1570,7 +1570,7 @@
       "widgets_values": [
         "enable",
         777001,
-        "randomize",
+        "fixed",
         4,
         1,
         "euler",
@@ -1737,7 +1737,7 @@
       "widgets_values": [
         "disable",
         0,
-        "randomize",
+        "fixed",
         4,
         1,
         "euler",
@@ -3367,7 +3367,7 @@
       },
       "widgets_values": [
         777001,
-        "randomize",
+        "fixed",
         16,
         4.5,
         "euler",
@@ -3749,7 +3749,7 @@
         768,
         "white",
         true,
-        ""
+        0
       ]
     },
     {
