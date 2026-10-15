@@ -8,8 +8,8 @@
       "id": 1,
       "type": "UNETLoader",
       "pos": [
-        -120,
-        -420
+        -1150,
+        -215
       ],
       "size": [
         360,
@@ -69,14 +69,14 @@
         "unet_name": "qwen_image_edit_2511_w4a8.safetensors",
         "weight_dtype": "default"
       },
-      "title": "Stage 1A: Qwen-Image-Edit-2511 (W4A8)"
+      "title": "【阶段 1A】Qwen-Image-Edit W4A8 底座模型"
     },
     {
       "id": 2,
       "type": "CLIPLoader",
       "pos": [
-        -120,
-        520
+        -1150,
+        575
       ],
       "size": [
         360,
@@ -148,14 +148,14 @@
         "type": "qwen_image",
         "device": "default"
       },
-      "title": "Stage 1A: Qwen2.5-VL-7B CLIP"
+      "title": "【阶段 1A】Qwen2.5-VL-7B 视觉语言编码器"
     },
     {
       "id": 3,
       "type": "VAELoader",
       "pos": [
-        -120,
-        700
+        -1150,
+        730
       ],
       "size": [
         360,
@@ -206,14 +206,14 @@
       "widgets_values_named": {
         "vae_name": "qwen_image_vae.safetensors"
       },
-      "title": "Stage 1A/1B: Qwen Image VAE"
+      "title": "【阶段 1A/1B】Qwen/Wan 图像 VAE"
     },
     {
       "id": 4,
       "type": "QwenEditFastConditioning",
       "pos": [
-        320,
-        -420
+        -650,
+        -600
       ],
       "size": [
         360,
@@ -329,7 +329,7 @@
           ]
         }
       ],
-      "title": "⚡ Stage 1A 快速多图条件编码 (参考图1 + 骨骼图2)",
+      "title": "【阶段 1A】单次 504px VL 编码与参考特征对齐",
       "properties": {
         "Node name for S&R": "QwenEditFastConditioning"
       },
@@ -352,8 +352,8 @@
       "id": 7,
       "type": "KSampler",
       "pos": [
-        320,
-        -140
+        -650,
+        -345
       ],
       "size": [
         360,
@@ -480,14 +480,14 @@
         "scheduler": "simple",
         "denoise": 1
       },
-      "title": "⚡ Stage 1A Qwen-Edit 4步采样"
+      "title": "【阶段 1A】Qwen-Edit 4步快速采样 (seed 12345)"
     },
     {
       "id": 8,
       "type": "VAEDecodeTiled",
       "pos": [
-        320,
-        200
+        -650,
+        -30
       ],
       "size": [
         360,
@@ -557,7 +557,8 @@
           "links": [
             59,
             66,
-            76
+            76,
+            85
           ]
         }
       ],
@@ -578,14 +579,14 @@
         "temporal_size": 64,
         "temporal_overlap": 8
       },
-      "title": "Stage 1A 分块 VAE 解码"
+      "title": "【阶段 1A】分块 VAE 解码 (防爆 16GB 显存)"
     },
     {
       "id": 9,
       "type": "SaveImage",
       "pos": [
-        760,
-        -40
+        -100,
+        2060
       ],
       "size": [
         360,
@@ -620,7 +621,7 @@
           "links": null
         }
       ],
-      "title": "🖼️ Stage 1 最终精修立绘预览 (自动传给 Stage 2)",
+      "title": "【阶段 1B 产物保存·重绘后定稿单帧】",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.40.0"
@@ -636,8 +637,8 @@
       "id": 12,
       "type": "UNETLoader",
       "pos": [
-        1200,
-        -420
+        500,
+        -600
       ],
       "size": [
         360,
@@ -697,14 +698,14 @@
         "unet_name": "wan2.2_i2v_high_noise_14B_int8_convrot.safetensors",
         "weight_dtype": "default"
       },
-      "title": "Stage 2: Wan2.2 HighNoise 14B"
+      "title": "【阶段 2】Wan2.2 14B HighNoise 专家"
     },
     {
       "id": 13,
       "type": "LoraLoaderModelOnly",
       "pos": [
-        1200,
-        -260
+        500,
+        -465
       ],
       "size": [
         360,
@@ -771,14 +772,14 @@
         "lora_name": "wan2.2_i2v_A14b_high_noise_lora_rank64_lightx2v_4step_1022.safetensors",
         "strength_model": 1
       },
-      "title": "Stage 2: HighNoise Lightning LoRA"
+      "title": "【阶段 2】LightX2V 4步加速 LoRA (HighNoise)"
     },
     {
       "id": 14,
       "type": "ModelSamplingSD3",
       "pos": [
-        1200,
-        -100
+        500,
+        -330
       ],
       "size": [
         360,
@@ -827,14 +828,14 @@
       "widgets_values_named": {
         "shift": 5
       },
-      "title": "Stage 2: HighNoise SD3 Shift"
+      "title": "【阶段 2】HighNoise 采样调度 (shift 5.0)"
     },
     {
       "id": 15,
       "type": "UNETLoader",
       "pos": [
-        1200,
-        200
+        500,
+        -80
       ],
       "size": [
         360,
@@ -894,14 +895,14 @@
         "unet_name": "wan2.2_i2v_low_noise_14B_int8_convrot.safetensors",
         "weight_dtype": "default"
       },
-      "title": "Stage 2: Wan2.2 LowNoise 14B"
+      "title": "【阶段 2】Wan2.2 14B LowNoise 专家"
     },
     {
       "id": 16,
       "type": "LoraLoaderModelOnly",
       "pos": [
-        1200,
-        360
+        500,
+        55
       ],
       "size": [
         360,
@@ -968,14 +969,14 @@
         "lora_name": "wan2.2_i2v_A14b_low_noise_lora_rank64_lightx2v_4step_1022.safetensors",
         "strength_model": 1
       },
-      "title": "Stage 2: LowNoise Lightning LoRA"
+      "title": "【阶段 2】LightX2V 4步加速 LoRA (LowNoise)"
     },
     {
       "id": 17,
       "type": "ModelSamplingSD3",
       "pos": [
-        1200,
-        520
+        500,
+        190
       ],
       "size": [
         360,
@@ -1024,14 +1025,14 @@
       "widgets_values_named": {
         "shift": 5
       },
-      "title": "Stage 2: LowNoise SD3 Shift"
+      "title": "【阶段 2】LowNoise 采样调度 (shift 5.0)"
     },
     {
       "id": 18,
       "type": "CLIPLoader",
       "pos": [
-        1640,
-        -420
+        500,
+        440
       ],
       "size": [
         330,
@@ -1104,14 +1105,14 @@
         "type": "wan",
         "device": "default"
       },
-      "title": "Stage 2: UMT5-XXL CLIP"
+      "title": "【阶段 2】UMT5 XXL 文本编码器"
     },
     {
       "id": 19,
       "type": "VAELoader",
       "pos": [
-        1640,
-        -240
+        500,
+        595
       ],
       "size": [
         330,
@@ -1160,14 +1161,14 @@
       "widgets_values_named": {
         "vae_name": "wan_2.1_vae.safetensors"
       },
-      "title": "Stage 2: Wan 2.1 VAE"
+      "title": "【阶段 2】Wan 2.1 3D-VAE"
     },
     {
       "id": 20,
       "type": "CLIPTextEncode",
       "pos": [
-        1640,
-        -100
+        500,
+        710
       ],
       "size": [
         330,
@@ -1216,14 +1217,14 @@
       "widgets_values_named": {
         "text": ""
       },
-      "title": "Stage 2: 视频动作正面编码"
+      "title": "【阶段 2】Wan 动作正向提示词"
     },
     {
       "id": 21,
       "type": "CLIPTextEncode",
       "pos": [
-        1640,
-        90
+        500,
+        875
       ],
       "size": [
         330,
@@ -1272,14 +1273,14 @@
       "widgets_values_named": {
         "text": ""
       },
-      "title": "Stage 2: 视频动作负面编码"
+      "title": "【阶段 2】Wan 动作负向提示词"
     },
     {
       "id": 22,
       "type": "WanImageToVideo",
       "pos": [
-        1640,
-        280
+        1050,
+        -600
       ],
       "size": [
         330,
@@ -1423,14 +1424,14 @@
         "length": 9,
         "batch_size": 1
       },
-      "title": "🎬 Stage 2 WanImageToVideo (384x576, 9帧)"
+      "title": "【阶段 2】Wan 图生视频起始潜空间构建"
     },
     {
       "id": 23,
       "type": "KSamplerAdvanced",
       "pos": [
-        2040,
-        -420
+        1050,
+        -315
       ],
       "size": [
         330,
@@ -1590,14 +1591,14 @@
         "end_at_step": 2,
         "return_with_leftover_noise": "enable"
       },
-      "title": "Stage 2: HighNoise 2步采样 (0->2)"
+      "title": "【阶段 2】Wan 4步采样 Part 1: HighNoise (0->2步)"
     },
     {
       "id": 24,
       "type": "KSamplerAdvanced",
       "pos": [
-        2040,
-        -10
+        1050,
+        70
       ],
       "size": [
         330,
@@ -1757,14 +1758,14 @@
         "end_at_step": 10000,
         "return_with_leftover_noise": "disable"
       },
-      "title": "Stage 2: LowNoise 2步采样 (2->4)"
+      "title": "【阶段 2】Wan 4步采样 Part 2: LowNoise (2->4步)"
     },
     {
       "id": 25,
       "type": "VAEDecodeTiled",
       "pos": [
-        2040,
-        400
+        1050,
+        455
       ],
       "size": [
         330,
@@ -1854,14 +1855,14 @@
         "temporal_size": 64,
         "temporal_overlap": 8
       },
-      "title": "Stage 2: 分块视频 VAE 解码"
+      "title": "【阶段 2】3D 分块 VAE 解码 (tile 256)"
     },
     {
       "id": 26,
       "type": "CreateVideo",
       "pos": [
-        2440,
-        10
+        1050,
+        650
       ],
       "size": [
         360,
@@ -1958,14 +1959,14 @@
         "color_space": "sRGB",
         "codec": "none"
       },
-      "title": "Stage 2 原视频合成 (8 FPS)"
+      "title": "【阶段 2】合成 8FPS 动作视频"
     },
     {
       "id": 27,
       "type": "SaveVideo",
       "pos": [
-        2440,
-        190
+        1050,
+        805
       ],
       "size": [
         360,
@@ -2048,14 +2049,14 @@
         "format.codec": "auto",
         "codec": "auto"
       },
-      "title": "📹 Stage 2 原始 9帧动画预览"
+      "title": "【阶段 2 动作视频产物保存】"
     },
     {
       "id": 29,
       "type": "AsepritePixelizeAssemble",
       "pos": [
-        2440,
-        -420
+        1600,
+        -600
       ],
       "size": [
         360,
@@ -2188,7 +2189,7 @@
           "links": null
         }
       ],
-      "title": "🎮 ③ Stage 3 通用像素化 + Aseprite 组装 (.aseprite + 4x GIF)",
+      "title": "【阶段 3】像素化抽取+32色调色板+.aseprite组装 (带元数据回溯)",
       "properties": {
         "Node name for S&R": "AsepritePixelizeAssemble"
       },
@@ -2225,12 +2226,12 @@
       "id": 30,
       "type": "PreviewImage",
       "pos": [
-        2860,
-        -420
+        1600,
+        -195
       ],
       "size": [
-        480,
-        440
+        380,
+        520
       ],
       "flags": {},
       "order": 34,
@@ -2257,14 +2258,14 @@
         "ver": "0.40.0",
         "Node name for S&R": "PreviewImage"
       },
-      "title": "🔍 Stage 3 像素序列帧 2x 全宽检视表"
+      "title": "【阶段 3 最终产物预览·像素动画与大图】"
     },
     {
       "id": 33,
       "type": "AsepriteLLMPromptDirector",
       "pos": [
-        -760,
-        160
+        -1700,
+        85
       ],
       "size": [
         560,
@@ -2274,6 +2275,11 @@
       "order": 7,
       "mode": 0,
       "inputs": [
+        {
+          "name": "llm_client",
+          "type": "LLM_CLIENT",
+          "link": 86
+        },
         {
           "name": "reference_image",
           "type": "IMAGE",
@@ -2324,7 +2330,7 @@
           ]
         }
       ],
-      "title": "✍️ ② 【中文姿势+动作描述 & 可编辑提示词导演】",
+      "title": "【阶段 0】提示词导演 (编排 S1/S2 提示词)",
       "properties": {
         "Node name for S&R": "AsepriteLLMPromptDirector"
       },
@@ -2356,8 +2362,8 @@
       "id": 34,
       "type": "LoraLoaderBypassModelOnly",
       "pos": [
-        -120,
-        60
+        -1150,
+        190
       ],
       "size": [
         360,
@@ -2426,14 +2432,14 @@
         "lora_name": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
         "strength_model": 1
       },
-      "title": "Stage 1A: Lightning 4-Step LoRA"
+      "title": "【阶段 1A】4步极速推理 Lightning LoRA (1.0)"
     },
     {
       "id": 35,
       "type": "ModelSamplingAuraFlow",
       "pos": [
-        -120,
-        380
+        -1150,
+        460
       ],
       "size": [
         360,
@@ -2494,14 +2500,14 @@
         "shift": 3.1,
         "sampling": "flow"
       },
-      "title": "Stage 1A: AuraFlow Shift"
+      "title": "【阶段 1A】AuraFlow 采样调度 (shift 3.1)"
     },
     {
       "id": 36,
       "type": "LoadImage",
       "pos": [
-        -760,
-        -420
+        -1150,
+        -600
       ],
       "size": [
         560,
@@ -2550,7 +2556,7 @@
           "links": null
         }
       ],
-      "title": "🎨 ① 上传【角色参考原图】(image1 -> Qwen-Edit)",
+      "title": "【阶段 1A】输入参考角色立绘 (Image 1)",
       "properties": {
         "cnr_id": "comfy-core",
         "ver": "0.40.0",
@@ -2571,8 +2577,8 @@
       "id": 37,
       "type": "RISAAttention",
       "pos": [
-        -120,
-        220
+        -1150,
+        325
       ],
       "size": [
         360,
@@ -2632,14 +2638,14 @@
         "attention": "int8_attention",
         "theta": 0.99
       },
-      "title": "Stage 1A: RISA INT8 Attention"
+      "title": "【阶段 1A】RISA INT8 稀疏注意力加速"
     },
     {
       "id": 38,
       "type": "RISAAttention",
       "pos": [
-        1200,
-        40
+        500,
+        -215
       ],
       "size": [
         360,
@@ -2699,14 +2705,14 @@
         "attention": "sparse_int8_attention",
         "theta": 0.99
       },
-      "title": "Stage 2: HighNoise RISA Attention"
+      "title": "【阶段 2】RISA 稀疏注意力 (HighNoise)"
     },
     {
       "id": 39,
       "type": "RISAAttention",
       "pos": [
-        1200,
-        660
+        500,
+        305
       ],
       "size": [
         360,
@@ -2766,14 +2772,14 @@
         "attention": "sparse_int8_attention",
         "theta": 0.99
       },
-      "title": "Stage 2: LowNoise RISA Attention"
+      "title": "【阶段 2】RISA 稀疏注意力 (LowNoise)"
     },
     {
       "id": 40,
       "type": "LoraLoaderBypassModelOnly",
       "pos": [
-        -120,
-        -100
+        -1150,
+        55
       ],
       "size": [
         360,
@@ -2818,7 +2824,7 @@
           ]
         }
       ],
-      "title": "Stage 1A: qwen_nsfw_adv LoKr (0.80)",
+      "title": "【阶段 1A】qwen_nsfw_adv 破甲 LoRA (0.80)",
       "properties": {
         "Node name for S&R": "LoraLoaderBypassModelOnly",
         "models": [
@@ -2837,10 +2843,10 @@
     {
       "id": 41,
       "type": "LoraLoaderBypassModelOnly",
-      "title": "Stage 1A: Unchained-XXX NSFW LoRA (0.72)",
+      "title": "【阶段 1A】Unchained-XXX 破甲 LoRA (0.72)",
       "pos": [
-        -120,
-        -260
+        -1150,
+        -80
       ],
       "size": [
         360,
@@ -2884,10 +2890,10 @@
     {
       "id": 42,
       "type": "AsepriteNSFWPoseLibrary",
-      "title": "🦴 ①-B 【NSFW 骨骼姿势预设库】(OpenPose 引导)",
+      "title": "【阶段 0】骨骼预设库 (支持开/关骨骼姿势引导)",
       "pos": [
-        -760,
-        -10
+        -1700,
+        -60
       ],
       "size": [
         560,
@@ -2918,10 +2924,10 @@
     {
       "id": 43,
       "type": "UNETLoader",
-      "title": "Stage 1B: Anima Base 2D 模型",
+      "title": "【阶段 1B】Anima Base v1.0 2D 动漫模型",
       "pos": [
-        320,
-        420
+        -100,
+        -100
       ],
       "size": [
         360,
@@ -2959,10 +2965,10 @@
     {
       "id": 44,
       "type": "CLIPLoader",
-      "title": "Stage 1B: Qwen3-0.6B CLIP",
+      "title": "【阶段 1B】Qwen 3.06B 文本编码器",
       "pos": [
-        320,
-        580
+        -100,
+        35
       ],
       "size": [
         360,
@@ -3003,8 +3009,8 @@
       "id": 46,
       "type": "DWPreprocessor",
       "pos": [
-        760,
-        -470
+        -100,
+        -600
       ],
       "size": [
         360,
@@ -3046,14 +3052,14 @@
         "dw-ll_ucoco_384.onnx",
         "disable"
       ],
-      "title": "1B · DWPose (detect body on Qwen output)"
+      "title": "【阶段 1B】DWPose 人体关键点探测 (仅身体)"
     },
     {
       "id": 47,
       "type": "AsepritePoseRegionMask",
       "pos": [
-        760,
-        -200
+        -100,
+        -305
       ],
       "size": [
         360,
@@ -3088,14 +3094,14 @@
         1.4,
         8
       ],
-      "title": "1B · Pelvis inpaint mask"
+      "title": "【阶段 1B】骨盆局部羽化遮罩 (size 1.4, feather 8)"
     },
     {
       "id": 48,
       "type": "StringConcatenate",
       "pos": [
-        340,
-        -470
+        -100,
+        540
       ],
       "size": [
         360,
@@ -3128,14 +3134,14 @@
         ", shorts, denim shorts, panties, underwear, lingerie, briefs, censored",
         ""
       ],
-      "title": "1B · Negative + clothing tags"
+      "title": "【阶段 1B】脱衣负面词拼接 (封禁短裤/内裤)"
     },
     {
       "id": 49,
       "type": "CLIPTextEncode",
       "pos": [
-        340,
-        -300
+        -100,
+        395
       ],
       "size": [
         360,
@@ -3171,14 +3177,14 @@
       "widgets_values": [
         ""
       ],
-      "title": "1B · Anima positive"
+      "title": "【阶段 1B】Anima 正向 Danbooru 提示词"
     },
     {
       "id": 50,
       "type": "CLIPTextEncode",
       "pos": [
-        340,
-        -180
+        -100,
+        735
       ],
       "size": [
         360,
@@ -3214,14 +3220,14 @@
       "widgets_values": [
         ""
       ],
-      "title": "1B · Anima negative"
+      "title": "【阶段 1B】Anima 负向提示词"
     },
     {
       "id": 51,
       "type": "VAEEncode",
       "pos": [
-        760,
-        -20
+        -100,
+        880
       ],
       "size": [
         360,
@@ -3254,14 +3260,15 @@
       "properties": {
         "Node name for S&R": "VAEEncode"
       },
-      "widgets_values": []
+      "widgets_values": [],
+      "title": "【阶段 1B】潜空间编码进 1B"
     },
     {
       "id": 52,
       "type": "SetLatentNoiseMask",
       "pos": [
-        760,
-        60
+        -100,
+        975
       ],
       "size": [
         360,
@@ -3294,14 +3301,15 @@
       "properties": {
         "Node name for S&R": "SetLatentNoiseMask"
       },
-      "widgets_values": []
+      "widgets_values": [],
+      "title": "【阶段 1B】锁定骨盆重绘遮罩"
     },
     {
       "id": 53,
       "type": "KSampler",
       "pos": [
-        1160,
-        -470
+        -100,
+        1070
       ],
       "size": [
         360,
@@ -3353,14 +3361,14 @@
         "simple",
         0.7
       ],
-      "title": "1B · Anima masked inpaint (re-roll seed if cloth remains)"
+      "title": "【阶段 1B】Anima 局部重绘 (denoise 0.70)"
     },
     {
       "id": 54,
       "type": "VAEDecodeTiled",
       "pos": [
-        1160,
-        -170
+        -100,
+        1385
       ],
       "size": [
         360,
@@ -3398,14 +3406,15 @@
         64,
         64,
         8
-      ]
+      ],
+      "title": "【阶段 1B】分块 VAE 解码"
     },
     {
       "id": 55,
       "type": "ImageCompositeMasked",
       "pos": [
-        1160,
-        0
+        -100,
+        1580
       ],
       "size": [
         360,
@@ -3448,15 +3457,15 @@
         0,
         false
       ],
-      "title": "1B · Paste back inside mask only"
+      "title": "【阶段 1B】骨盆区域羽化贴回原图"
     },
     {
       "id": 56,
       "type": "RegexReplace",
-      "title": "1B · Keep Danbooru tags only",
+      "title": "【阶段 1B】Danbooru 纯净标签截取 (带防错位保护)",
       "pos": [
-        340,
-        -60
+        -100,
+        190
       ],
       "size": [
         360,
@@ -3497,10 +3506,10 @@
     {
       "id": 57,
       "type": "RMBG",
-      "title": "1B · White background (RMBG-2.0)",
+      "title": "【阶段 1B】BiRefNet-2.0 纯净抠图 (白底去噪)",
       "pos": [
-        1160,
-        170
+        -100,
+        1765
       ],
       "size": [
         360,
@@ -3548,10 +3557,10 @@
     {
       "id": 58,
       "type": "AsepriteCharcardExtractor",
-      "title": "角色卡提取 (参考图 → charcard JSON)",
+      "title": "【阶段 0】角色卡提取器 (按需自动提取新卡)",
       "pos": [
-        -760,
-        900
+        -1700,
+        -315
       ],
       "size": [
         560,
@@ -3609,6 +3618,69 @@
         "",
         "(先填 base_url 再点获取模型)"
       ]
+    },
+    {
+      "id": 62,
+      "type": "PreviewImage",
+      "pos": [
+        -650,
+        165
+      ],
+      "size": [
+        360,
+        480
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 85
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": [],
+      "title": "【阶段 1A 产物预览·重绘前原图】(在此查看 Qwen 姿态适配)"
+    },
+    {
+      "id": 60,
+      "type": "AsepriteLLMProvider",
+      "pos": [
+        -1700,
+        -600
+      ],
+      "size": [
+        400,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "llm_client",
+          "type": "LLM_CLIENT",
+          "links": [
+            86
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteLLMProvider"
+      },
+      "widgets_values": [
+        "",
+        "",
+        "gemini-3.8-flash-high",
+        45
+      ],
+      "title": "【阶段 0】统一 LLM 客户端来源 (集中填写 URL & Key)"
     }
   ],
   "links": [
@@ -3945,7 +4017,7 @@
       36,
       0,
       33,
-      0,
+      1,
       "IMAGE"
     ],
     [
@@ -4177,61 +4249,116 @@
       58,
       0,
       33,
-      1,
+      2,
       "STRING"
+    ],
+    [
+      85,
+      8,
+      0,
+      62,
+      0,
+      "IMAGE"
+    ],
+    [
+      86,
+      60,
+      0,
+      33,
+      0,
+      "LLM_CLIENT"
     ]
   ],
   "groups": [
     {
       "id": 1,
-      "title": "① 角色参考图 + 骨骼预设 + 提示词导演 + 角色卡提取",
+      "title": "【阶段 0】统一 LLM 客户端与控制中心",
       "bounding": [
-        -790,
-        -500,
+        -1730,
+        -680,
         620,
-        1680
+        1530
       ],
-      "color": "#3f789e",
-      "font_size": 24,
+      "color": "#2a5b84",
+      "font_size": 26,
       "flags": {}
     },
     {
       "id": 2,
-      "title": "② Stage 1A (Qwen-Edit 换姿) + Stage 1B (Anima 2D 精修 & BiRefNet 自动净底)",
+      "title": "【阶段 1A】Qwen 模型加载与破甲 LoRA 配置",
       "bounding": [
-        -150,
-        -500,
-        1300,
-        1380
+        -1180,
+        -680,
+        620,
+        1565
       ],
-      "color": "#8a5a44",
-      "font_size": 24,
+      "color": "#82561e",
+      "font_size": 26,
       "flags": {}
     },
     {
       "id": 3,
-      "title": "③ Stage 2 (Wan2.2 14B 4步图生视频动作)",
+      "title": "【阶段 1A】Qwen 姿态生成与重绘前原图检视",
       "bounding": [
-        1170,
-        -500,
-        1230,
-        1380
+        -680,
+        -680,
+        420,
+        1410
       ],
-      "color": "#593975",
-      "font_size": 24,
+      "color": "#82561e",
+      "font_size": 26,
       "flags": {}
     },
     {
       "id": 4,
-      "title": "④ Stage 3 (通用像素化 + Aseprite 组装与全宽检视)",
+      "title": "【阶段 1B】Anima 局部脱衣重绘与抠图定稿",
       "bounding": [
-        2410,
-        -500,
-        960,
-        1380
+        -130,
+        -680,
+        420,
+        3205
       ],
-      "color": "#2b6e44",
-      "font_size": 24,
+      "color": "#6c2882",
+      "font_size": 26,
+      "flags": {}
+    },
+    {
+      "id": 5,
+      "title": "【阶段 2】Wan2.2 14B 双专家与提示词配置",
+      "bounding": [
+        470,
+        -680,
+        420,
+        1760
+      ],
+      "color": "#226938",
+      "font_size": 26,
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "【阶段 2】Wan 4步采样与动作视频合成",
+      "bounding": [
+        1020,
+        -680,
+        420,
+        1850
+      ],
+      "color": "#226938",
+      "font_size": 26,
+      "flags": {}
+    },
+    {
+      "id": 7,
+      "title": "【阶段 3】像素化抽取与 Aseprite 组装",
+      "bounding": [
+        1570,
+        -680,
+        440,
+        1090
+      ],
+      "color": "#84223d",
+      "font_size": 26,
       "flags": {}
     }
   ],

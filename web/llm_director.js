@@ -183,29 +183,109 @@ app.registerExtension({
             return;
         }
 
-        if (nodeData.name === "AsepriteNSFWPoseLibrary") {
+        if (nodeData.name === "AsepriteLLMProvider") {
             const origCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
                 const r = origCreated ? origCreated.apply(this, arguments) : undefined;
-                const poseW = this.widgets?.find((w) => w.name === "pose_preset");
-                if (poseW) {
-                    const origCb = poseW.callback;
-                    poseW.callback = function (v) {
-                        const dirNode = app.graph?._nodes?.find((n) => n.type === "AsepriteLLMPromptDirector");
-                        if (dirNode) {
-                            const dPose = dirNode.widgets?.find((w) => w.name === "pose_preset");
-                            const dMode = dirNode.widgets?.find((w) => w.name === "prompt_mode");
-                            if (dPose) dPose.value = v;
-                            if (dMode) dMode.value = "auto_compile (LLM编译并自动回填下方文本框)";
-                            app.graph.setDirtyCanvas(true, true);
+                maskApiKeyWidget(this);
+                const baseUrlW = this.widgets?.find((w) => w.name === "base_url");
+                const apiKeyW = this.widgets?.find((w) => w.name === "api_key");
+                const modelW = this.widgets?.find((w) => w.name === "model");
+
+                const setKeyBtn = this.addWidget("button", "🔑 点击设置 / 修改 API Key", null, async () => {
+                    const currentVal = apiKeyW?._realValue || "";
+                    const userKey = window.prompt("请输入您的 API Key (OpenAI 兼容接口密钥，留空则清空使用本地配置)：", currentVal);
+                    if (userKey !== null) {
+                        const trimmed = userKey.trim();
+                        if (apiKeyW) {
+                            apiKeyW._realValue = trimmed;
+                            apiKeyW.value = trimmed ? "••••••••••••••••" : "(空 = 自动读已存Key)";
                         }
-                        if (origCb) return origCb.apply(this, arguments);
-                    };
-                }
+                        try {
+                            await api.fetchApi("/aseprite_llm/save_key", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ api_key: trimmed }),
+                            });
+                            alert(trimmed ? "API Key 已成功更新并安全持久化保存！" : "API Key 已清空（将使用本地配置）。");
+                        } catch (e) {
+                            alert(`保存 API Key 异常: ${e}`);
+                        }
+                        app.graph.setDirtyCanvas(true, true);
+                    }
+                });
+                setKeyBtn.serialize = false;
+
+                const fetchBtn = this.addWidget("button", "🔄 从 Base URL 拉取模型列表", null, async () => {
+                    const baseUrl = baseUrlW?.value?.trim() || "";
+                    const apiKey = apiKeyW?._realValue || apiKeyW?.value || "";
+                    if (!baseUrl) {
+                        alert("请先填写 base_url（例如 https://api.openai.com/v1）");
+                        return;
+                    }
+                    try {
+                        const resp = await api.fetchApi("/aseprite_llm/fetch_models", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ base_url: baseUrl, api_key: apiKey }),
+                        });
+                        const data = await resp.json();
+                        if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
+                            if (modelW && modelW.options) {
+                                modelW.options.values = data.models;
+                                if (!data.models.includes(modelW.value)) modelW.value = data.models[0];
+                                app.graph.setDirtyCanvas(true, true);
+                            }
+                            alert(`已成功拉取 ${data.models.length} 个模型！可在下方 model 下拉框直接选择。`);
+                        } else {
+                            alert(`拉取模型失败: ${data.error || "未知错误"}`);
+                        }
+                    } catch (err) {
+                        alert(`请求异常: ${err}`);
+                    }
+                });
+                fetchBtn.serialize = false;
+                return r;
+            };
+            const origConf = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const r = origConf ? origConf.apply(this, arguments) : undefined;
+                maskApiKeyWidget(this);
                 return r;
             };
             return;
         }
+
+        if (nodeData.name === "AsepriteStageBridge") {
+            const origCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = origCreated ? origCreated.apply(this, arguments) : undefined;
+                this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
+                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                    if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
+                        node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
+                        app.graph.setDirtyCanvas(true, true);
+                        app.queuePrompt(0);
+                    } else {
+                        alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                    }
+                }).serialize = false;
+
+                this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
+                    const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
+                    if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
+                        node2.widgets[1].value = Math.floor(Math.random() * 1e14);
+                        app.graph.setDirtyCanvas(true, true);
+                        app.queuePrompt(0);
+                    } else {
+                        alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
+                    }
+                }).serialize = false;
+                return r;
+            };
+            return;
+        }
+
         if (nodeData.name === "RegexReplace") {
             const origConf = nodeType.prototype.onConfigure;
             nodeType.prototype.onConfigure = function () {

@@ -93,7 +93,7 @@ def _get_charcard_choices() -> list:
 def _resolve_api_key(raw_key: str) -> str:
     """UI key (or name of an env var typed into the UI) > local git-ignored secret file > env LLM_API_KEY."""
     val = (raw_key or "").strip()
-    if val and not re.match(r"^[•*\s]+$", val) and not val.startswith("(空"):
+    if val and not re.match(r"^[•*\s]+$", val) and not val.startswith("(空") and val != "__SAVED__":
         if val in os.environ:
             return os.environ[val]
         # Save newly entered key locally so it never ends up inside workflow JSON
@@ -461,12 +461,166 @@ class AsepritePixelizeAssemble:
         print("[AsepritePixelizeAssemble] Freed Stage 2 Wan2.2 14B vbars from VRAM after completion so re-rolls never stall.")
         return {"ui": {"images": ui_images}, "result": (pixel_frames_tensor, zoom_tensor, report)}
 
+class AsepriteLLMProvider:
+    """Centralized LLM Connection Provider node distributing LLM_CLIENT to all downstream nodes."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "base_url": ("STRING", {"default": DEFAULT_LLM_BASE_URL, "tooltip": "OpenAI 兼容接口地址，例如 https://api.openai.com/v1"}),
+                "api_key": ("STRING", {"default": "", "tooltip": "API 密钥，点击下方按钮或留空可读取本地保存的配置"}),
+                "model": (_get_cached_models(), {"default": _get_cached_models()[0]}),
+                "timeout": ("INT", {"default": 45, "min": 5, "max": 300, "step": 5}),
+            }
+        }
+
+    RETURN_TYPES = ("LLM_CLIENT",)
+    RETURN_NAMES = ("llm_client",)
+    FUNCTION = "provide"
+    CATEGORY = "pixel_art/aseprite"
+
+    def provide(self, base_url="", api_key="", model="", timeout=45):
+        from llm_provider import LLMClient
+        client = LLMClient(
+            base_url=base_url or DEFAULT_LLM_BASE_URL,
+            api_key=api_key or "",
+            default_model=model or _get_cached_models()[0],
+            timeout=int(timeout),
+        )
+        return (client,)
+
+
+class AsepriteLLMPoseGenerator:
+    """Generates standard OpenPose 18-point skeleton images & continuous multi-frame sequences
+    from natural language action descriptions via LLM + kinematic constraints.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "action_prompt": ("STRING", {"multiline": True, "default": "sitting on the floor in an M-shaped spread legs pose, hands on outer thighs, breathing gently"}),
+                "num_frames": ("INT", {"default": 1, "min": 1, "max": 24, "step": 1, "tooltip": "1=生成单帧骨骼；>1=生成连续动作时序序列（默认 9 帧）"}),
+                "motion_mode": (["pingpong", "loop", "linear"], {"default": "pingpong"}),
+                "width": ("INT", {"default": 512, "min": 256, "max": 1536, "step": 16}),
+                "height": ("INT", {"default": 768, "min": 256, "max": 1536, "step": 16}),
+                "bg_color": (["white", "black"], {"default": "white"}),
+                "enforce_constraints": ("BOOLEAN", {"default": True, "tooltip": "开启前置解剖学刚性拓扑约束，钳位防止肢体反折或脱臼"}),
+            },
+            "optional": {
+                "llm_client": ("LLM_CLIENT",),
+                "model_override": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "POSE_KEYPOINT", "STRING")
+    RETURN_NAMES = ("pose_images", "pose_keypoints", "pose_summary")
+    FUNCTION = "generate"
+    CATEGORY = "pixel_art/aseprite"
+
+    def generate(self, action_prompt, num_frames=1, motion_mode="pingpong", width=512, height=768, bg_color="white", enforce_constraints=True, llm_client=None, model_override=""):
+        from pose_generator import SYS_PROMPT_POSE_GEN, enforce_anatomical_constraints, interpolate_pose_sequence, render_openpose_skeleton
+        from llm_provider import LLMClient
+
+        client = llm_client
+        if client is None:
+            client = LLMClient(base_url=DEFAULT_LLM_BASE_URL, api_key="", default_model=_get_cached_models()[0])
+
+        data = client.request_json(
+            sys_prompt=SYS_PROMPT_POSE_GEN,
+            user_prompt=action_prompt,
+            model_override=model_override,
+        )
+
+        start_kps = data.get("start_kps", [])
+        peak_kps = data.get("peak_kps", start_kps)
+
+        if enforce_constraints:
+            start_kps = enforce_anatomical_constraints(start_kps)
+            peak_kps = enforce_anatomical_constraints(peak_kps)
+
+        seq_kps = interpolate_pose_sequence(start_kps, peak_kps, num_frames=max(1, int(num_frames)), mode=motion_mode)
+
+        tensors = []
+        for frame_kps in seq_kps:
+            pil_im = render_openpose_skeleton(frame_kps, width=int(width), height=int(height), bg_color=bg_color)
+            arr = np.array(pil_im).astype(np.float32) / 255.0
+            tensors.append(torch.from_numpy(arr))
+
+        batch_tensor = torch.stack(tensors, dim=0)
+
+        pose_keypoints = []
+        for frame_kps in seq_kps:
+            flat = []
+            for pt in frame_kps:
+                flat.extend([float(pt[0]) * width, float(pt[1]) * height, float(pt[2])])
+            pose_keypoints.append({
+                "people": [{"pose_keypoints_2d": flat}],
+                "canvas_width": int(width),
+                "canvas_height": int(height),
+            })
+
+        return (batch_tensor, pose_keypoints, data.get("pose_summary", action_prompt))
+
+
+class AsepriteImageCritic:
+    """Perceptual Multimodal Visual Quality & Identity QA Evaluator with optional execution gate."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "enable_gate": ("BOOLEAN", {"default": False, "tooltip": "若开启且总分低于 min_score，则熔断拦截后续视频渲染"}),
+                "min_score": ("FLOAT", {"default": 65.0, "min": 0.0, "max": 100.0, "step": 1.0}),
+            },
+            "optional": {
+                "reference_image": ("IMAGE",),
+                "llm_client": ("LLM_CLIENT",),
+                "model_override": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "FLOAT", "STRING", "STRING")
+    RETURN_NAMES = ("passed_image", "overall_score", "report", "critic_json")
+    FUNCTION = "evaluate"
+    CATEGORY = "pixel_art/aseprite"
+
+    def evaluate(self, image, enable_gate=False, min_score=65.0, reference_image=None, llm_client=None, model_override=""):
+        from image_critic import evaluate_character_image
+        from llm_provider import LLMClient
+        from comfy_execution.graph import ExecutionBlocker
+
+        client = llm_client
+        if client is None:
+            client = LLMClient(base_url=DEFAULT_LLM_BASE_URL, api_key="", default_model=_get_cached_models()[0])
+
+        score, report, data_dict = evaluate_character_image(
+            client=client,
+            image_tensor=image,
+            reference_tensor=reference_image,
+            min_score=float(min_score),
+            model_override=model_override,
+        )
+
+        passed = bool(data_dict.get("passed", score >= min_score)) and (score >= min_score)
+        print(f"[AsepriteImageCritic] {report.strip()}")
+
+        if enable_gate and not passed:
+            msg = f"Image Critic Quality Gate Blocked: Score {score:.1f} < {min_score:.1f}. Defects: {data_dict.get('defect_warning') or 'Low anatomy/identity score'}"
+            return (ExecutionBlocker(msg), score, report, json.dumps(data_dict, indent=2, ensure_ascii=False))
+
+        return (image, score, report, json.dumps(data_dict, indent=2, ensure_ascii=False))
+
+
 class AsepriteStageBridge:
     """Bridges Stage 1 (Anima reference image generation) to Stage 2 (Wan2.2 I2V).
 
     Unloads Stage 1 models (Anima UNet / Qwen CLIP / Qwen VAE) from 16GB VRAM once
     the reference image is decoded, preventing VRAM contention when Wan2.2 14B loads.
-    Also supports optional override_image input if the user wants to feed an existing image.
+    Also supports optional override_image input if the user wants to feed an existing image,
+    and skip_stage2_video to easily test Stage 1 single frames rapidly without waiting for video.
     """
 
     @classmethod
@@ -474,6 +628,8 @@ class AsepriteStageBridge:
         return {
             "required": {
                 "anima_image": ("IMAGE",),
+                "skip_stage2_video": ("BOOLEAN", {"default": False,
+                                                   "tooltip": "若为 True，则跳过后续 Stage 2 Wan 视频生成与像素化，专心快速调试 Stage 1 单帧效果"}),
                 "use_override_image": ("BOOLEAN", {"default": False,
                                                    "tooltip": "If True and override_image is connected, use override_image instead of anima_image"}),
                 "unload_stage1_vram": ("BOOLEAN", {"default": True,
@@ -490,7 +646,7 @@ class AsepriteStageBridge:
     FUNCTION = "bridge"
     CATEGORY = "pixel_art/aseprite"
 
-    def bridge(self, anima_image, use_override_image=False, unload_stage1_vram=True, save_as_input_name="anima_latest_ref.png", override_image=None):
+    def bridge(self, anima_image, skip_stage2_video=False, use_override_image=False, unload_stage1_vram=True, save_as_input_name="anima_latest_ref.png", override_image=None):
         chosen = override_image if (use_override_image and override_image is not None) else anima_image
         if save_as_input_name and save_as_input_name.strip():
             fname = os.path.basename(save_as_input_name.strip())
@@ -499,6 +655,11 @@ class AsepriteStageBridge:
             in_path = os.path.join(folder_paths.get_input_directory(), fname)
             arr = (chosen[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
             Image.fromarray(arr[:, :, :3], "RGB").save(in_path)
+
+        if skip_stage2_video:
+            from comfy_execution.graph import ExecutionBlocker
+            print("[AsepriteStageBridge] Stage 2 video generation skipped by user (skip_stage2_video=True). Stage 1 frame preserved.")
+            return (ExecutionBlocker("Stage 2 视频生成已跳过（仅运行 Stage 1 单帧调试）"),)
 
         if unload_stage1_vram:
             _purge_vram_and_vbars()
@@ -533,6 +694,7 @@ class AsepriteLLMPromptDirector:
                 ),
             },
             "optional": {
+                "llm_client": ("LLM_CLIENT", {"tooltip": "接入统一 AsepriteLLMProvider 客户端，无需在本地填写 URL 和 Key"}),
                 "reference_image": ("IMAGE",),
                 "charcard_file": ("STRING", {"forceInput": True, "tooltip": "接「角色卡提取」节点的 charcard_filename；接上后覆盖上方 charcard 下拉框"}),
                 "pose_preset": (_get_pose_preset_choices(), {"default": "none (不使用预设骨骼)"}),
@@ -1037,6 +1199,12 @@ class AsepriteLLMPromptDirector:
         prompt=None,
         **kwargs,
     ):
+        llm_client = kwargs.get("llm_client")
+        if llm_client is not None:
+            base_url = getattr(llm_client, "base_url", base_url)
+            api_key = getattr(llm_client, "api_key", api_key)
+            if hasattr(llm_client, "get_effective_model"):
+                model = llm_client.get_effective_model(model)
         # A connected AsepriteCharcardExtractor only overrides if dropdown is set to 'none' or empty
         if (not charcard or charcard.startswith("none")) and isinstance(charcard_file, str) and charcard_file.strip():
             charcard = charcard_file.strip()
@@ -1349,6 +1517,9 @@ class AsepriteCharcardExtractor:
                 "base_url": ("STRING", {"default": DEFAULT_LLM_BASE_URL}),
                 "api_key": ("STRING", {"default": ""}),
                 "model": (_get_cached_models(), {"default": _get_cached_models()[0]}),
+            },
+            "optional": {
+                "llm_client": ("LLM_CLIENT", {"tooltip": "接入统一 AsepriteLLMProvider，无需在本地填写 URL 和 Key"}),
             }
         }
 
@@ -1357,9 +1528,14 @@ class AsepriteCharcardExtractor:
     FUNCTION = "extract"
     CATEGORY = "pixel_art/aseprite"
 
-    def extract(self, reference_image, enable_extraction=False, user_prompt="", char_name="custom_char", use_llm=True, base_url="", api_key="", model=""):
+    def extract(self, reference_image, enable_extraction=False, user_prompt="", char_name="custom_char", use_llm=True, base_url="", api_key="", model="", llm_client=None, **kwargs):
         if not enable_extraction:
             return ("", "", "", "", "")
+        if llm_client is not None:
+            base_url = getattr(llm_client, "base_url", base_url)
+            api_key = getattr(llm_client, "api_key", api_key)
+            if hasattr(llm_client, "get_effective_model"):
+                model = llm_client.get_effective_model(model)
         from scripts.extract_charcard import extract_charcard
         safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", (char_name or "custom_char").strip()).strip("_") or "custom_char"
         arr = (reference_image[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
@@ -1514,6 +1690,9 @@ except Exception as _e:
 WEB_DIRECTORY = "./web"
 
 NODE_CLASS_MAPPINGS = {
+    "AsepriteLLMProvider": AsepriteLLMProvider,
+    "AsepriteLLMPoseGenerator": AsepriteLLMPoseGenerator,
+    "AsepriteImageCritic": AsepriteImageCritic,
     "AsepritePixelizeAssemble": AsepritePixelizeAssemble,
     "AsepriteStageBridge": AsepriteStageBridge,
     "AsepriteLLMPromptDirector": AsepriteLLMPromptDirector,
@@ -1524,6 +1703,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "AsepriteLLMProvider": "LLM Provider (Centralized API Client)",
+    "AsepriteLLMPoseGenerator": "LLM Pose Generator (Natural Language → OpenPose)",
+    "AsepriteImageCritic": "Image Critic & QA Gate (Multi-finger & Anatomy Evaluator)",
     "AsepritePixelizeAssemble": "Aseprite Pixelize & Assemble (.aseprite + GIF)",
     "AsepriteStageBridge": "Stage 1->2 Bridge (Free Anima VRAM)",
     "AsepriteLLMPromptDirector": "LLM Prompt Director (Anima + Wan2.2)",

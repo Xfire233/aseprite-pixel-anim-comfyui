@@ -11,14 +11,13 @@
 - 模型清单唯一来源是 `models.json`；改了工作流里的模型文件名后运行 `scripts/embed_model_urls.py`。
 - 不进 git：`work/`、`output/`、`input/`、`scripts/charcard_*.json`、任何权重和 secret（见 `.gitignore`）。
 
-## 当前进度与基线定版（2026-10-15 最新完整定版）
+## 当前进度与基线定版（2026-10-16 模块化与局部重跑定版）
 
 - **Stage 1A 黄金脱衣 LoRA 配方**：`qwen_nsfw_adv` (0.80) + `Unchained-XXX` (0.72) + `Lightning-4steps` (1.0)。
-- **Stage 1B 局部精修与 Regex 错位防御**：`AsepritePoseRegionMask` 定版为 `pelvis=True, chest=False, size=1.4, feather=8`，`denoise=0.70`。`__init__.py` 与 `nodes_string.py` 注入防错位保护。
+- **Stage 1B 局部精修与 Regex 错位防御**：`AsepritePoseRegionMask` 定版为 `pelvis=True, chest=False, size=1.4, feather=8`，`denoise=0.70`。
 - **Stage 2 真实 Diffusion 动力学恢复**：彻底删除底层的 `_warp_image_by_pose_kps` 仿射拉伸 hook 与 `_ACTIVE_TRAJ_LATENT` 采样覆盖，恢复 Wan2.2 真实的扩散物理动力学。
-- **角色卡提取器开关化与按需智能脱衣（Node 58）**：增加 `enable_extraction` 布尔开关（默认关闭，保持下拉预设卡生效）；接入 `user_prompt` 输入插槽，Vision LLM 根据用户指令动态处理——脱衣需求彻底剔除下装与牛仔面料（`denim` 强清洗且封入负面词，自适应体型与已知角色名），普通日常动作完整保持原始服装。
-- **提示词导演（Node 33）直观 API Key 输入**：清理了误将 API Key 和 Base URL 转为隐藏连线插槽的缺陷，恢复为节点上的直观密码文本框。
-- **成品工作流元数据回溯**：`AsepritePixelizeAssemble` 注入 `prompt` 与 `workflow` PngInfo，生成的 `_zoom.png` / `_sheet.png` 直接拖回 ComfyUI 即可 100% 还原工作流；同名落盘 `<name>_workflow.json`。
+- **模块化 LLM 架构与动作生成**：`AsepriteLLMProvider` 统一输出 `LLM_CLIENT`；`AsepriteLLMPoseGenerator` 支持自然语言直接生成单帧及 9 帧连续 OpenPose 骨骼序列（解剖刚性校验防反折）；`AsepriteImageCritic` 负责多指与畸变打标及质量熔断门禁。
+- **重绘前原图预览与 5 大阶段清晰布局**：工作流按 `【阶段 0】`、`【阶段 1A】`、`【阶段 1B】`、`【阶段 2】`、`【阶段 3】` 5 大阶段严格列式横向排布；新增 Node 62 `【阶段 1A 产物预览·重绘前原图】`；StageBridge 挂载 `🎲 仅重摇 1B`、`🎲 仅重摇 2` 与 `skip_stage2_video` 快速调试开关。
 - **自动化回归套件**：`scripts/eval_pipeline_baseline.py` 与 `scripts/validate_workflows.py` 全部 100% PASS。
 ## 入口
 

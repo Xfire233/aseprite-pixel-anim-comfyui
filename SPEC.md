@@ -33,6 +33,11 @@
   4. **产物元数据双重回溯（PngInfo + workflow.json）**：`AsepritePixelizeAssemble` 声明隐藏上下文 `"prompt"` 与 `"extra_pnginfo"`，在 `_zoom.png` 与 `_sheet.png` 中以标准 `PngInfo` 写入 `prompt` 与 `workflow` 文本块（**直接拖入 ComfyUI 即可 100% 还原全部节点与参数**），同时在 `output/aseprite/` 自动落盘同名 `<name>_workflow.json` 与 `<name>_prompt.json`。
   5. **API Key 密码掩码安全防护**：`web/llm_director.js` 统一拦截 LiteGraph 的 `LGraphCanvas.prototype.prompt` 弹窗输入框为 `type="password"`，画布绘制强制使用 `••••••••••••••••` 掩码，并在 `onNodeCreated` 与 `onConfigure` 同步脱敏，序列化严格存为 `__SAVED__`，绝不向工作流 JSON 或图片元数据泄露明文密钥。同时清理误将 `base_url`/`api_key` 等输入框转成隐藏连线插槽的缺陷，恢复节点上直观的 API Key 输入文本框。
   6. **角色卡提取器开关化与按需智能脱衣（AsepriteCharcardExtractor）**：提取节点新增 `enable_extraction` 布尔开关（默认关闭，不覆盖下拉卡；开启时自动提取）；增加 `user_prompt` 输入插槽由 Vision LLM 智能理解意图——若指令包含脱衣/暴露则完全清洗下装与牛仔面料（`denim` 进入强清洗名单并封入负面词，自适应注入平胸/丰满体型与已知角色名），若指令为普通日常动作则 100% 保持原始服装，不再无差别强行脱衣。
+  7. **模块化 LLM 体系、自然语言动作序列生成与 5 大阶段清晰列式布局（2026-10-16 定版）**：
+     - **`AsepriteLLMProvider`**：集中管理 API 密钥与端点，向导演、姿势生成器与质检器分发 `LLM_CLIENT` 连接，节点提供原生 `window.prompt` 弹窗输入，彻底杜绝 Canvas 键盘焦点失效 Bug。
+     - **`AsepriteLLMPoseGenerator`**：支持自然语言直接生成 OpenPose 18 关键点，内置起止姿态 + 本地人体运动学刚性插值与解剖学比例纠偏（防反折、防脱臼），输出单帧及连续多帧时序序列。
+     - **`AsepriteImageCritic`**：工业级多模态打标器（多指/手部完整度、解剖透视畸变、原图面部还原度三项评分），提供 `enable_gate` 熔断门禁。
+     - **工作流 5 大阶段清晰重构**：按 `【阶段 0】`、`【阶段 1A】`、`【阶段 1B】`、`【阶段 2】`、`【阶段 3】` 严格横向列式排布，彻底杜绝节点重叠；在 Stage 1A 增加专用 `【阶段 1A 产物预览·重绘前原图】`（Node 62），并在 StageBridge 提供 `🎲 仅重摇 1B`、`🎲 仅重摇 2` 与 `skip_stage2_video` 快速单帧调试开关。
 ### 坑速查(本机实测)
 
 | 坑 | 对策 |
