@@ -1096,13 +1096,16 @@ class AsepriteLLMPromptDirector:
                     hand_a = f"{', '.join(custom_hands_a)}"
                     pose_q = f"standing facing forward {hand_q}, entire full body inside the frame"
                     pose_a = f"1girl, solo, standing, {hand_a}, full frontal"
+        has_oral_motion = any(k in up for k in ("口交", "含入", "含住", "嘴前", "吞吐", "吹箫", "前后吞吐", "头部前后"))
         has_active_motion = any(k in up for k in ("并起伏", "上下起伏", "骑乘", "弹跳", "律动", "抽插", "抽送", "摇晃", "摆动", "挺腰"))
         is_default_breath_suffix = up.endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏")
-        if has_active_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃"))):
+        if has_oral_motion:
+            pose_w = "large amplitude rhythmic oral sex motion, vigorous pronounced head and torso bobbing deeply back and forth along the penis shaft, head thrusting forward and backward with full range of motion, mouth sliding all the way up and down the shaft, dynamic expressive movement"
+        elif has_active_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃"))):
             if pose_meta.get("wan_motion_prompt") and any(k in pose_meta.get("id", "") for k in ("squat", "cowgirl", "doggy", "arch", "mating", "standing_behind")):
-                pose_w = pose_meta["wan_motion_prompt"]
+                pose_w = f"large amplitude motion, {pose_meta['wan_motion_prompt']}"
             else:
-                pose_w = "smoothly bouncing her hips, pelvis, and torso up and down in a pronounced rhythmic riding motion with natural knee flexion and chest bounce"
+                pose_w = "large amplitude riding motion, smoothly bouncing her hips, pelvis, and torso up and down in a pronounced rhythmic riding motion with natural knee flexion and chest bounce"
         elif "缓慢呼吸" in up and not has_active_motion:
             pose_w = "breathing slowly with her chest and shoulders gently rising and falling"
         extra_tags = []
@@ -1348,6 +1351,9 @@ class AsepriteLLMPromptDirector:
         if not wan_pos:
             wan_pos = f"anime style, {macros['wan_subject']} on a plain white background, {pose_w_local}, static camera, fixed composition, full body, clean 2D anime illustration"
         wan_neg = _expand(parsed.get("wan_negative", ""))
+        has_dynamic = any(k in str(user_prompt) for k in ("口交", "含入", "含住", "嘴前", "吞吐", "吹箫", "前后吞吐", "起伏", "骑乘", "弹跳", "律动", "抽插", "抽送"))
+        if has_dynamic and "motionless" not in wan_neg.lower():
+            wan_neg = f"static, still, motionless, stationary, subtle, barely moving, small movement, slow motion, {wan_neg}"
         res = (anima_pos, anima_neg, wan_pos, wan_neg)
         _PROMPT_CACHE[cache_key] = res
         return res

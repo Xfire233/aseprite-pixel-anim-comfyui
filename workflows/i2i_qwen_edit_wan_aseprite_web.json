@@ -823,7 +823,7 @@
         "Node name for S&R": "ModelSamplingSD3"
       },
       "widgets_values": [
-        5
+        3.5
       ],
       "widgets_values_named": {
         "shift": 5
@@ -1415,7 +1415,7 @@
       "widgets_values": [
         384,
         576,
-        9,
+        13,
         1
       ],
       "widgets_values_named": {
@@ -1571,11 +1571,11 @@
         "enable",
         777001,
         "fixed",
-        4,
+        5,
         1,
         "euler",
         "simple",
-        0,
+        3,
         2,
         "enable"
       ],
@@ -1738,10 +1738,10 @@
         "disable",
         0,
         "fixed",
-        4,
+        5,
         1,
         "euler",
-        "simple",
+        3,
         2,
         10000,
         "disable"
