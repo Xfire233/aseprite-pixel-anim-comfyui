@@ -71,6 +71,7 @@ RISA 是一个需要本机 CUDA 编译的 INT8 注意力核（要求 CUDA Toolki
 1. 在 **① 角色参考原图** 节点上传参考图。
 2. 在 **NSFW Pose & Motion Library** 节点选骨骼预设，共 10 套（6 套单人、4 套双人）。
 3. 在 **LLM Prompt Director** 节点用中文写姿势和动作。默认用本地模板编译，不联网。想用大模型，自己填 `base_url`（任意 OpenAI 兼容接口），再点"获取模型"。
+   - **角色卡提取**节点已接在参考图和提示词导演之间：运行时从参考图提取角色卡，写入 `scripts/charcard_<char_name>.json`，并直接替换导演里的 `charcard` 下拉框。只用本地 WD14，不联网；填了 `base_url` 和 `model` 才会调用 LLM 精修。换角色时先改 `char_name`，否则会覆盖旧的卡。想改用下拉框里已有的卡，把提取节点设为 Bypass（Ctrl+B）即可。
 4. 运行。结果在 `ComfyUI/output/aseprite/`：`.aseprite`、4 倍 `.gif`、`_sheet.png`。
 
 **调参提示：**

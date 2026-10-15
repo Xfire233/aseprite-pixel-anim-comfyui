@@ -1,8 +1,8 @@
 {
   "id": "147bcafc-b014-4621-a8b3-ea21e6a1fd61",
   "revision": 0,
-  "last_node_id": 39,
-  "last_link_id": 44,
+  "last_node_id": 40,
+  "last_link_id": 46,
   "nodes": [
     {
       "id": 1,
@@ -660,7 +660,8 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            13
+            13,
+            45
           ]
         },
         {
@@ -2757,6 +2758,11 @@
             "name": "stage2_negative"
           },
           "link": null
+        },
+        {
+          "name": "charcard_file",
+          "type": "STRING",
+          "link": 46
         }
       ],
       "outputs": [
@@ -2953,6 +2959,69 @@
         "attention": "sparse_int8_attention",
         "theta": 0.99
       }
+    },
+    {
+      "id": 40,
+      "type": "AsepriteCharcardExtractor",
+      "title": "角色卡提取 (参考图 → charcard JSON)",
+      "pos": [
+        100,
+        2470
+      ],
+      "size": [
+        400,
+        210
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 45
+        }
+      ],
+      "outputs": [
+        {
+          "name": "charcard_filename",
+          "type": "STRING",
+          "links": [
+            46
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "anima_tags",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "anima_nsfw_tags",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "wan_subject",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "charcard_json",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteCharcardExtractor"
+      },
+      "widgets_values": [
+        "custom_char",
+        true,
+        "",
+        "",
+        "(先填 base_url 再点获取模型)"
+      ]
     }
   ],
   "links": [
@@ -3307,6 +3376,22 @@
       39,
       0,
       "MODEL"
+    ],
+    [
+      45,
+      10,
+      0,
+      40,
+      0,
+      "IMAGE"
+    ],
+    [
+      46,
+      40,
+      0,
+      33,
+      12,
+      "STRING"
     ]
   ],
   "groups": [],

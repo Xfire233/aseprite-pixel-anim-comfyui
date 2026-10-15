@@ -2,6 +2,14 @@
 
 格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。日期为本地开发日期。
 
+## [Unreleased]
+
+### 新增
+- 3 个带提示词导演的工作流加入 `AsepriteCharcardExtractor`（参考图 → 角色卡提取 → 导演）。导演新增可选输入 `charcard_file`，接上后覆盖 `charcard` 下拉框。
+
+### 修复
+- 导演的提示词缓存现在包含角色卡文件内容的 hash。同名角色卡重新提取后，不再沿用旧的编译结果。
+
 ## [0.3.0] - 2026-10-15
 
 首个可分发版本：仓库本身就是一个 ComfyUI 自定义节点，克隆后运行 `install.py` 即可使用。

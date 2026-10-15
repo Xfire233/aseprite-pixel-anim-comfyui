@@ -623,6 +623,7 @@ class AsepriteLLMPromptDirector:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                "charcard_file": ("STRING", {"forceInput": True, "tooltip": "接「角色卡提取」节点的 charcard_filename；接上后覆盖上方 charcard 下拉框"}),
                 "pose_preset": (_get_pose_preset_choices(), {"default": "none (不使用预设骨骼)"}),
                 "prompt_mode": (
                     [
@@ -985,8 +986,10 @@ class AsepriteLLMPromptDirector:
         is_duo = pose_id.startswith("duo_") or any(k in str(user_prompt) for k in ("双人", "两人", "男女", "两个女孩", "1boy", "2girls"))
         if is_duo:
             macros["anima_tags"] = re.sub(r"\bsolo\b\s*,?", "", macros.get("anima_tags", "")).strip(" ,")
+        card_path = os.path.join(PROJECT_ROOT, "scripts", (charcard or "").split(" ")[0].strip())
+        card_sig = hashlib.md5(open(card_path, "rb").read()).hexdigest()[:12] if charcard and not charcard.startswith("none") and os.path.isfile(card_path) else ""
         cache_key = hashlib.sha256(
-            f"{base_url}|{model}|{charcard}|{user_prompt}|{ref_hash}|{pose_id}|v8".encode("utf-8")
+            f"{base_url}|{model}|{charcard}|{card_sig}|{user_prompt}|{ref_hash}|{pose_id}|v8".encode("utf-8")
         ).hexdigest()
         if cache_key in _PROMPT_CACHE:
             print("[AsepriteLLMPromptDirector] Reusing cached compiled prompts.")
@@ -1119,9 +1122,13 @@ class AsepriteLLMPromptDirector:
         stage1_negative="",
         stage2_positive="",
         stage2_negative="",
+        charcard_file="",
         prompt=None,
         **kwargs,
     ):
+        # A connected AsepriteCharcardExtractor overrides the dropdown with the card it just wrote.
+        if isinstance(charcard_file, str) and charcard_file.strip():
+            charcard = charcard_file.strip()
         # 1. Self-heal if an un-refreshed browser tab sent shifted widgets (system_prompt -> pose_preset -> prompt_mode)
         if isinstance(system_prompt, str) and any(system_prompt.startswith(p) for p in ("solo_", "duo_", "none")):
             if isinstance(pose_preset, str) and any(pose_preset.startswith(m) for m in ("compile_if_empty", "auto_compile", "manual_override")):

@@ -1,8 +1,8 @@
 {
   "id": "27723686-cc76-4c7b-8d78-38ccb8cee0ed",
   "revision": 0,
-  "last_node_id": 57,
-  "last_link_id": 82,
+  "last_node_id": 58,
+  "last_link_id": 84,
   "nodes": [
     {
       "id": 1,
@@ -2391,6 +2391,11 @@
             "name": "stage2_negative"
           },
           "link": null
+        },
+        {
+          "name": "charcard_file",
+          "type": "STRING",
+          "link": 84
         }
       ],
       "outputs": [
@@ -2646,7 +2651,8 @@
           "type": "IMAGE",
           "links": [
             3,
-            49
+            49,
+            83
           ]
         },
         {
@@ -3650,6 +3656,69 @@
         false,
         "default"
       ]
+    },
+    {
+      "id": 58,
+      "type": "AsepriteCharcardExtractor",
+      "title": "角色卡提取 (参考图 → charcard JSON)",
+      "pos": [
+        -760,
+        900
+      ],
+      "size": [
+        560,
+        210
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 83
+        }
+      ],
+      "outputs": [
+        {
+          "name": "charcard_filename",
+          "type": "STRING",
+          "links": [
+            84
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "anima_tags",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "anima_nsfw_tags",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "wan_subject",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "charcard_json",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteCharcardExtractor"
+      },
+      "widgets_values": [
+        "custom_char",
+        true,
+        "",
+        "",
+        "(先填 base_url 再点获取模型)"
+      ]
     }
   ],
   "links": [
@@ -4204,17 +4273,33 @@
       57,
       0,
       "IMAGE"
+    ],
+    [
+      83,
+      36,
+      0,
+      58,
+      0,
+      "IMAGE"
+    ],
+    [
+      84,
+      58,
+      0,
+      33,
+      12,
+      "STRING"
     ]
   ],
   "groups": [
     {
       "id": 1,
-      "title": "① 角色参考图 + 骨骼预设 + 提示词导演",
+      "title": "① 角色参考图 + 骨骼预设 + 提示词导演 + 角色卡提取",
       "bounding": [
         -790,
         -500,
         620,
-        1380
+        1680
       ],
       "color": "#3f789e",
       "font_size": 24,
