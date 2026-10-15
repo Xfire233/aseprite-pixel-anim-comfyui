@@ -250,7 +250,7 @@
           "name": "image2",
           "shape": 7,
           "type": "IMAGE",
-          "link": 52
+          "link": 90
         },
         {
           "label": "model",
@@ -2265,7 +2265,7 @@
       "type": "AsepriteLLMPromptDirector",
       "pos": [
         -2000,
-        520
+        780
       ],
       "size": [
         560,
@@ -2289,6 +2289,11 @@
           "name": "charcard_file",
           "type": "STRING",
           "link": 84
+        },
+        {
+          "name": "custom_pose_name",
+          "type": "STRING",
+          "link": 91
         }
       ],
       "outputs": [
@@ -3708,7 +3713,9 @@
         {
           "name": "pose_images",
           "type": "IMAGE",
-          "links": []
+          "links": [
+            88
+          ]
         },
         {
           "name": "pose_keypoints",
@@ -3718,7 +3725,9 @@
         {
           "name": "pose_summary",
           "type": "STRING",
-          "links": []
+          "links": [
+            89
+          ]
         }
       ],
       "properties": {
@@ -3733,6 +3742,65 @@
         "white",
         true,
         ""
+      ]
+    },
+    {
+      "id": 66,
+      "type": "AsepritePoseSelector",
+      "pos": [
+        -2000,
+        560
+      ],
+      "size": [
+        540,
+        180
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "preset_pose_image",
+          "type": "IMAGE",
+          "link": 52
+        },
+        {
+          "name": "preset_pose_name",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "llm_pose_image",
+          "type": "IMAGE",
+          "link": 88
+        },
+        {
+          "name": "llm_pose_summary",
+          "type": "STRING",
+          "link": 89
+        }
+      ],
+      "outputs": [
+        {
+          "name": "active_pose_image",
+          "type": "IMAGE",
+          "links": [
+            90
+          ]
+        },
+        {
+          "name": "active_pose_name",
+          "type": "STRING",
+          "links": [
+            91
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepritePoseSelector"
+      },
+      "widgets_values": [
+        "builtin_preset (使用阶段0骨骼预设库)"
       ]
     }
   ],
@@ -4093,8 +4161,8 @@
       52,
       42,
       0,
-      4,
-      3,
+      66,
+      0,
       "IMAGE"
     ],
     [
@@ -4328,6 +4396,38 @@
       65,
       0,
       "LLM_CLIENT"
+    ],
+    [
+      88,
+      65,
+      0,
+      66,
+      2,
+      "IMAGE"
+    ],
+    [
+      89,
+      65,
+      2,
+      66,
+      3,
+      "STRING"
+    ],
+    [
+      90,
+      66,
+      0,
+      4,
+      3,
+      "IMAGE"
+    ],
+    [
+      91,
+      66,
+      1,
+      33,
+      3,
+      "STRING"
     ]
   ],
   "groups": [
@@ -4337,8 +4437,8 @@
       "bounding": [
         -2030,
         -680,
-        620,
-        1970
+        600,
+        2200
       ],
       "color": "#2a5b84",
       "font_size": 26,

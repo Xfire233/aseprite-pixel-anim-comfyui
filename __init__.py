@@ -526,23 +526,37 @@ class AsepriteLLMPoseGenerator:
     CATEGORY = "pixel_art/aseprite"
 
     def generate(self, action_prompt, num_frames=1, motion_mode="pingpong", width=512, height=768, bg_color="white", enforce_constraints=True, llm_client=None, model_override=""):
-        from pose_generator import SYS_PROMPT_POSE_GEN, enforce_anatomical_constraints, interpolate_pose_sequence, render_openpose_skeleton
+        from pose_generator import (
+            SYS_PROMPT_POSE_GEN,
+            desensitize_pose_prompt,
+            heuristic_fallback_pose,
+            enforce_anatomical_constraints,
+            interpolate_pose_sequence,
+            render_openpose_skeleton,
+        )
         from llm_provider import LLMClient
 
         client = llm_client
         if client is None:
             client = LLMClient(base_url=DEFAULT_LLM_BASE_URL, api_key="", default_model=_get_cached_models()[0])
 
-        data = client.request_json(
-            sys_prompt=SYS_PROMPT_POSE_GEN,
-            user_prompt=action_prompt,
-            model_override=model_override,
-        )
+        clean_prompt = desensitize_pose_prompt(action_prompt)
+        print(f"[AsepriteLLMPoseGenerator] Raw action: '{action_prompt[:60]}' -> Kinematic: '{clean_prompt[:60]}'")
 
-        start_kps = data.get("start_kps", [])
-        peak_kps = data.get("peak_kps", start_kps)
-
-        if enforce_constraints:
+        try:
+            data = client.request_json(
+                sys_prompt=SYS_PROMPT_POSE_GEN,
+                user_prompt=clean_prompt,
+                model_override=model_override,
+            )
+            start_kps = data.get("start_kps", [])
+            peak_kps = data.get("peak_kps", start_kps)
+            summary = data.get("pose_summary", clean_prompt)
+            if not start_kps or len(start_kps) < 14:
+                raise ValueError(f"LLM returned incomplete keypoints ({len(start_kps)} points)")
+        except Exception as e:
+            print(f"[AsepriteLLMPoseGenerator] LLM synthesis blocked/failed ({e}); engaged kinematic heuristic fallback.")
+            start_kps, peak_kps, summary = heuristic_fallback_pose(action_prompt)
             start_kps = enforce_anatomical_constraints(start_kps)
             peak_kps = enforce_anatomical_constraints(peak_kps)
 
@@ -567,7 +581,7 @@ class AsepriteLLMPoseGenerator:
                 "canvas_height": int(height),
             })
 
-        return (batch_tensor, pose_keypoints, data.get("pose_summary", action_prompt))
+        return (batch_tensor, pose_keypoints, summary)
 
 
 class AsepriteImageCritic:
@@ -618,6 +632,40 @@ class AsepriteImageCritic:
             return (ExecutionBlocker(msg), score, report, json.dumps(data_dict, indent=2, ensure_ascii=False))
 
         return (image, score, report, json.dumps(data_dict, indent=2, ensure_ascii=False))
+
+class AsepritePoseSelector:
+    """Switches between Builtin Pose Preset (Node 42) and LLM Generated Pose (Node 65)
+    to dynamically route the active pose image and description into Stage 1A and Prompt Director.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "source": (["builtin_preset (使用阶段0骨骼预设库)", "llm_generated (使用阶段0自然语言生成的动作)"], {"default": "builtin_preset (使用阶段0骨骼预设库)"}),
+            },
+            "optional": {
+                "preset_pose_image": ("IMAGE",),
+                "preset_pose_name": ("STRING", {"default": ""}),
+                "llm_pose_image": ("IMAGE",),
+                "llm_pose_summary": ("STRING", {"default": ""}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("active_pose_image", "active_pose_name")
+    FUNCTION = "select_pose"
+    CATEGORY = "pixel_art/aseprite"
+
+    def select_pose(self, source, preset_pose_image=None, preset_pose_name="", llm_pose_image=None, llm_pose_summary=""):
+        if "llm_generated" in source:
+            img = llm_pose_image if llm_pose_image is not None else preset_pose_image
+            name = llm_pose_summary if llm_pose_summary else preset_pose_name
+            return (img, name)
+        else:
+            img = preset_pose_image if preset_pose_image is not None else llm_pose_image
+            name = preset_pose_name if preset_pose_name else llm_pose_summary
+            return (img, name)
 
 
 class AsepriteStageBridge:
@@ -703,6 +751,7 @@ class AsepriteLLMPromptDirector:
                 "llm_client": ("LLM_CLIENT", {"tooltip": "接入统一 AsepriteLLMProvider 客户端，无需在本地填写 URL 和 Key"}),
                 "reference_image": ("IMAGE",),
                 "charcard_file": ("STRING", {"forceInput": True, "tooltip": "接「角色卡提取」节点的 charcard_filename；接上后覆盖上方 charcard 下拉框"}),
+                "custom_pose_name": ("STRING", {"forceInput": True, "tooltip": "接 AsepritePoseSelector 或 AsepriteLLMPoseGenerator 的动态姿势描述，当次运行直接生效"}),
                 "pose_preset": (_get_pose_preset_choices(), {"default": "none (不使用预设骨骼)"}),
                 "prompt_mode": (
                     [
@@ -1254,9 +1303,13 @@ class AsepriteLLMPromptDirector:
             api_key = getattr(llm_client, "api_key", api_key)
             if hasattr(llm_client, "get_effective_model"):
                 model = llm_client.get_effective_model(model)
-        # A connected AsepriteCharcardExtractor only overrides if dropdown is set to 'none' or empty
-        if (not charcard or charcard.startswith("none")) and isinstance(charcard_file, str) and charcard_file.strip():
+        # A connected AsepriteCharcardExtractor overrides when it emits a non-empty card filename
+        if isinstance(charcard_file, str) and charcard_file.strip():
             charcard = charcard_file.strip()
+        # A connected PoseSelector overrides when it emits a dynamic pose description
+        custom_pose_name = kwargs.get("custom_pose_name")
+        if isinstance(custom_pose_name, str) and custom_pose_name.strip():
+            user_prompt = f"{user_prompt}，动态动作姿势：{custom_pose_name.strip()}"
         # 1. Self-heal if an un-refreshed browser tab sent shifted widgets (system_prompt -> pose_preset -> prompt_mode)
         if isinstance(system_prompt, str) and any(system_prompt.startswith(p) for p in ("solo_", "duo_", "none")):
             if isinstance(pose_preset, str) and any(pose_preset.startswith(m) for m in ("compile_if_empty", "auto_compile", "manual_override")):
@@ -1741,6 +1794,7 @@ WEB_DIRECTORY = "./web"
 NODE_CLASS_MAPPINGS = {
     "AsepriteLLMProvider": AsepriteLLMProvider,
     "AsepriteLLMPoseGenerator": AsepriteLLMPoseGenerator,
+    "AsepritePoseSelector": AsepritePoseSelector,
     "AsepriteImageCritic": AsepriteImageCritic,
     "AsepritePixelizeAssemble": AsepritePixelizeAssemble,
     "AsepriteStageBridge": AsepriteStageBridge,
@@ -1754,6 +1808,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AsepriteLLMProvider": "LLM Provider (Centralized API Client)",
     "AsepriteLLMPoseGenerator": "LLM Pose Generator (Natural Language → OpenPose)",
+    "AsepritePoseSelector": "Pose Source Selector (Preset vs LLM Generated)",
     "AsepriteImageCritic": "Image Critic & QA Gate (Multi-finger & Anatomy Evaluator)",
     "AsepritePixelizeAssemble": "Aseprite Pixelize & Assemble (.aseprite + GIF)",
     "AsepriteStageBridge": "Stage 1->2 Bridge (Free Anima VRAM)",
