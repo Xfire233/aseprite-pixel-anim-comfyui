@@ -1772,12 +1772,39 @@ class AsepritePoseRegionMask:
     def build(self, pose_kps, pelvis=True, chest=False, size=1.0, feather=8, hands=False, action_prompt=""):
         frame = pose_kps[0]
         W, H = int(frame["canvas_width"]), int(frame["canvas_height"])
+
+        # Smart Natural-Language & Explicit Syntax Mask Region Parser
+        feet = False
+        face = False
         if action_prompt:
-            p_low = str(action_prompt).lower()
-            if any(k in p_low for k in ("揉胸", "摸胸", "托胸", "抓胸", "露胸", "上身裸", "乳头")):
+            p = str(action_prompt).lower()
+            # 1. Full body redraw shortcut
+            if any(k in p for k in ("全身重绘", "全部重绘", "全图重绘", "full_body", "fullbody")):
+                return (torch.ones((1, H, W), dtype=torch.float32),)
+
+            # 2. Explicit syntax: 重绘范围: 胸部, 下体, 手
+            m = re.search(r"重绘范围[:：]\s*([^\n;，,]+(?:[，,][^\n;，,]+)*)", p)
+            if m:
+                for term in re.split(r"[,，\s]+", m.group(1)):
+                    t = term.strip()
+                    if any(k in t for k in ("胸", "乳")): chest = True
+                    if any(k in t for k in ("下体", "骨盆", "裆", "私处", "穴", "裤")): pelvis = True
+                    if any(k in t for k in ("手", "腕")): hands = True
+                    if any(k in t for k in ("脚", "足", "赤足")): feet = True
+                    if any(k in t for k in ("脸", "面", "头", "表情")): face = True
+
+            # 3. Dynamic Natural Language Keywords
+            if any(k in p for k in ("揉胸", "摸胸", "托胸", "抓胸", "露胸", "上身裸", "乳房", "乳头", "胸部", "敞开")):
                 chest = True
-            if any(k in p_low for k in ("揉胸", "摸胸", "自慰", "摸下体", "抠逼", "伸入下体", "手在裆")):
+            if any(k in p for k in ("下体", "私处", "裆部", "自慰", "脱裤", "不穿裤", "底裤", "内裤", "胖次", "短裤", "开腿", "分腿", "骨盆", "阴部", "小穴")):
+                pelvis = True
+            if any(k in p for k in ("手", "揉胸", "摸胸", "自慰", "摸下体", "抠逼", "扣逼", "伸入下体", "手在裆", "触碰私处", "抓胸", "双手")):
                 hands = True
+            if any(k in p for k in ("赤足", "光脚", "脱鞋", "光脚丫", "脚丫", "足部", "足交")):
+                feet = True
+            if any(k in p for k in ("表情", "脸红", "吐舌", "闭眼", "害羞", "张嘴", "含住", "吐舌头")):
+                face = True
+
         mask = Image.new("L", (W, H), 0)
         draw = ImageDraw.Draw(mask)
         for person in frame.get("people", []):
@@ -1798,18 +1825,22 @@ class AsepritePoseRegionMask:
             hip_mid = 0.5 * (r_hip + l_hip)
             hip_w = max(float(np.linalg.norm(r_hip - l_hip)), 1.0)
             torso = float(np.linalg.norm(hip_mid - neck)) if neck is not None else 2.5 * hip_w
+
+            # Pelvis / Crotch region
             if pelvis:
-                # Crotch/shorts sit past the hip line along the body axis (neck -> hips). Knees are NOT used for
-                # placement: in squats/M-legs they are level with or above the hips and pulled the region upward.
                 down = (hip_mid - neck) / max(torso, 1.0) if neck is not None else np.array([0.0, 1.0], dtype=np.float32)
                 c = hip_mid + down * 0.22 * torso
                 rx, ry = 0.95 * hip_w * size, 0.38 * torso * size
                 draw.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=255)
+
+            # Chest / Breasts region
             if chest and neck is not None:
                 c = 0.62 * neck + 0.38 * hip_mid
                 sho_w = float(np.linalg.norm(r_sho - l_sho)) if (r_sho is not None and l_sho is not None) else 1.6 * hip_w
                 rx, ry = 0.55 * sho_w * size, 0.24 * torso * size
                 draw.ellipse([c[0] - rx, c[1] - ry, c[0] + rx, c[1] + ry], fill=255)
+
+            # Hands / Wrists region
             if hands:
                 r_wri, l_wri = pt(4), pt(7)
                 hr = 0.20 * torso * size
@@ -1817,6 +1848,23 @@ class AsepritePoseRegionMask:
                     draw.ellipse([r_wri[0] - hr, r_wri[1] - hr, r_wri[0] + hr, r_wri[1] + hr], fill=255)
                 if l_wri is not None:
                     draw.ellipse([l_wri[0] - hr, l_wri[1] - hr, l_wri[0] + hr, l_wri[1] + hr], fill=255)
+
+            # Feet / Ankles region
+            if feet:
+                r_ank, l_ank = pt(10), pt(13)
+                fr = 0.18 * torso * size
+                if r_ank is not None:
+                    draw.ellipse([r_ank[0] - fr, r_ank[1] - fr, r_ank[0] + fr, r_ank[1] + fr], fill=255)
+                if l_ank is not None:
+                    draw.ellipse([l_ank[0] - fr, l_ank[1] - fr, l_ank[0] + fr, l_ank[1] + fr], fill=255)
+
+            # Face region
+            if face and neck is not None:
+                nose = pt(0)
+                fc = nose if nose is not None else 0.5 * (neck + pt(14) if pt(14) is not None else neck)
+                far = 0.22 * torso * size
+                draw.ellipse([fc[0] - far, fc[1] - far, fc[0] + far, fc[1] + far], fill=255)
+
         if feather > 0:
             mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
         return (torch.from_numpy(np.array(mask).astype(np.float32) / 255.0).unsqueeze(0),)

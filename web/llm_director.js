@@ -261,17 +261,40 @@ app.registerExtension({
                 if (node._bridgeButtonsAdded) return;
                 node._bridgeButtonsAdded = true;
                 node.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
+                    // Lock Stage 1A (Node 7 Qwen-Edit) so it does NOT randomize seed
+                    const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
+                    if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
+                        node7.widgets[1].value = "fixed";
+                    }
+                    // Randomize ONLY Stage 1B (Node 53 Anima)
                     const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
                     if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
                         node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
-                        app.graph.setDirtyCanvas(true, true);
-                        app.queuePrompt(0);
                     } else {
                         alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                        return;
                     }
+                    // Lock Stage 2 (Node 23 Wan2.2) so it does not randomize seed
+                    const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
+                    if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 2) {
+                        node2.widgets[2].value = "fixed";
+                    }
+                    app.graph.setDirtyCanvas(true, true);
+                    app.queuePrompt(0);
                 }).serialize = false;
 
                 node.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
+                    // Lock Stage 1A (Node 7 Qwen-Edit)
+                    const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
+                    if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
+                        node7.widgets[1].value = "fixed";
+                    }
+                    // Lock Stage 1B (Node 53 Anima)
+                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                    if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 1) {
+                        node1B.widgets[1].value = "fixed";
+                    }
+                    // Randomize ONLY Stage 2 (Node 23 Wan2.2)
                     const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
                     if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
                         node2.widgets[1].value = Math.floor(Math.random() * 1e14);
@@ -533,18 +556,35 @@ app.registerExtension({
             });
             tplBtn.serialize = false;
             const r1bBtn = this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
+                const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
+                if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
+                    node7.widgets[1].value = "fixed";
+                }
                 const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
                 if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
                     node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
-                    app.graph.setDirtyCanvas(true, true);
-                    app.queuePrompt(0);
                 } else {
                     alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                    return;
                 }
+                const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
+                if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 2) {
+                    node2.widgets[2].value = "fixed";
+                }
+                app.graph.setDirtyCanvas(true, true);
+                app.queuePrompt(0);
             });
             r1bBtn.serialize = false;
 
             const r2Btn = this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
+                const node7 = app.graph?._nodes?.find((n) => n.id == 7 || (n.type === "KSampler" && n.title?.includes("1A")));
+                if (node7 && Array.isArray(node7.widgets) && node7.widgets.length > 1) {
+                    node7.widgets[1].value = "fixed";
+                }
+                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 1) {
+                    node1B.widgets[1].value = "fixed";
+                }
                 const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
                 if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
                     node2.widgets[1].value = Math.floor(Math.random() * 1e14);

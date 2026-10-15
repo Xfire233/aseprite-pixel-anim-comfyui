@@ -464,7 +464,7 @@
       },
       "widgets_values": [
         777001,
-        "randomize",
+        "fixed",
         4,
         1,
         "euler",
@@ -2551,7 +2551,8 @@
           "links": [
             3,
             49,
-            83
+            83,
+            95
           ]
         },
         {
@@ -3542,8 +3543,7 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            79,
-            80
+            94
           ]
         },
         {
@@ -3680,7 +3680,8 @@
           "type": "LLM_CLIENT",
           "links": [
             86,
-            87
+            87,
+            96
           ]
         }
       ],
@@ -3837,6 +3838,71 @@
         "Node name for S&R": "PreviewImage"
       },
       "widgets_values": []
+    },
+    {
+      "id": 68,
+      "type": "AsepriteImageCritic",
+      "pos": [
+        1150,
+        480
+      ],
+      "size": [
+        360,
+        240
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 94
+        },
+        {
+          "name": "reference_image",
+          "type": "IMAGE",
+          "link": 95
+        },
+        {
+          "name": "llm_client",
+          "type": "LLM_CLIENT",
+          "link": 96
+        }
+      ],
+      "outputs": [
+        {
+          "name": "passed_image",
+          "type": "IMAGE",
+          "links": [
+            79,
+            80
+          ]
+        },
+        {
+          "name": "overall_score",
+          "type": "FLOAT",
+          "links": []
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": []
+        },
+        {
+          "name": "critic_json",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteImageCritic"
+      },
+      "widgets_values": [
+        false,
+        65.0,
+        ""
+      ]
     }
   ],
   "links": [
@@ -4362,7 +4428,7 @@
     ],
     [
       79,
-      57,
+      68,
       0,
       9,
       0,
@@ -4370,7 +4436,7 @@
     ],
     [
       80,
-      57,
+      68,
       0,
       22,
       4,
@@ -4479,6 +4545,30 @@
       47,
       1,
       "STRING"
+    ],
+    [
+      94,
+      57,
+      0,
+      68,
+      0,
+      "IMAGE"
+    ],
+    [
+      95,
+      36,
+      0,
+      68,
+      1,
+      "IMAGE"
+    ],
+    [
+      96,
+      60,
+      0,
+      68,
+      2,
+      "LLM_CLIENT"
     ]
   ],
   "groups": [
@@ -4525,10 +4615,10 @@
       "id": 4,
       "title": "【阶段 1B】Anima 局部脱衣重绘与抠图定稿",
       "bounding": [
-        -330,
-        -680,
-        420,
-        3280
+        -350,
+        400,
+        1900,
+        600
       ],
       "color": "#6c2882",
       "font_size": 26,
