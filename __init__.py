@@ -1005,8 +1005,46 @@ class AsepriteLLMPromptDirector:
 
         # Only override pose_q / pose_a from Chinese text when no preset skeleton was selected (preserves duo_* and all preset skeletons!)
         if not pose_meta:
+            # 1. Parse custom hand actions globally across all poses
+            custom_hands_q = []
+            custom_hands_a = []
+            # Hand to mouth / oral / blowjob
+            if any(k in up for k in ("嘴前", "含入", "口交", "含住", "握住肉棒", "举在嘴前", "双手在嘴", "吞吐", "嘴唇")):
+                custom_hands_q.append("both hands raised in front of her mouth holding the penis shaft")
+                custom_hands_a.append("hands raised, holding penis, fellatio, oral, blowjob, penis in mouth")
+            elif any(k in up for k in ("抬手", "举手", "双手抬起", "举起双手", "手抬起来")):
+                custom_hands_q.append("both arms raised up with hands held high")
+                custom_hands_a.append("arms up, hands raised")
+
+            # Hand to breast
+            if any(k in up for k in ("揉胸", "摸胸", "托胸", "抓胸", "抚摸胸部", "放在胸前", "放在胸口")):
+                if "左手" in up:
+                    custom_hands_q.append("left hand placed over chest fondling own breast")
+                    custom_hands_a.append("left hand on own breast, fondling own breast")
+                elif "右手" in up:
+                    custom_hands_q.append("right hand placed over chest fondling own breast")
+                    custom_hands_a.append("right hand on own breast, fondling own breast")
+                else:
+                    custom_hands_q.append("one hand placed over chest fondling own breast")
+                    custom_hands_a.append("hand on own breast, fondling own breast")
+
+            # Hand to crotch / masturbation
+            if any(k in up for k in ("伸入下体", "摸下体", "放在裆部", "自慰", "抠逼", "扣逼", "手指插入", "触碰私处")):
+                if "右手" in up:
+                    custom_hands_q.append("right hand at pelvis center touching herself")
+                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+                elif "左手" in up:
+                    custom_hands_q.append("left hand at pelvis center touching herself")
+                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+                else:
+                    custom_hands_q.append("one hand at pelvis center touching herself")
+                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+
             if any(k in up for k in ("蹲", "骑乘")):
-                if any(h in up for h in ("扶在地", "撑地", "手在地", "扶地")):
+                if custom_hands_q:
+                    hand_q = f"with {', and '.join(custom_hands_q)}"
+                    hand_a = f"{', '.join(custom_hands_a)}"
+                elif any(h in up for h in ("扶在地", "撑地", "手在地", "扶地")):
                     hand_q = "with both hands resting on the floor outside her hips for support"
                     hand_a = "hands on floor, supporting self"
                 else:
@@ -1014,50 +1052,43 @@ class AsepriteLLMPromptDirector:
                     hand_a = "arms spread outward, hands on outer knees"
                 pose_q = f"in a balanced front-view wide-legged squat with knees spread apart {hand_q}, natural 2D anime body proportions without extreme foreshortening, entire full body from head to feet inside the frame with white margins"
                 pose_a = f"1girl, solo, squatting, wide spread legs, {hand_a}, full frontal, balanced proportions"
-            elif any(k in up for k in ("M字", "m字", "坐在地上", "坐姿")):
-                # Check if user specified custom hand actions before falling back to default floor resting hands
-                custom_hands_q = []
-                custom_hands_a = []
-                if any(k in up for k in ("揉胸", "摸胸", "托胸", "抓胸", "抚摸胸部", "放在胸前", "放在胸口")):
-                    if "左手" in up:
-                        custom_hands_q.append("left hand placed over chest fondling own breast")
-                        custom_hands_a.append("left hand on own breast, fondling own breast")
-                    elif "右手" in up:
-                        custom_hands_q.append("right hand placed over chest fondling own breast")
-                        custom_hands_a.append("right hand on own breast, fondling own breast")
-                    else:
-                        custom_hands_q.append("one hand placed over chest fondling own breast")
-                        custom_hands_a.append("hand on own breast, fondling own breast")
-
-                if any(k in up for k in ("伸入下体", "摸下体", "放在裆部", "自慰", "抠逼", "扣逼", "手指插入", "触碰私处")):
-                    if "右手" in up:
-                        custom_hands_q.append("right hand at pelvis center touching herself")
-                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
-                    elif "左手" in up:
-                        custom_hands_q.append("left hand at pelvis center touching herself")
-                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
-                    else:
-                        custom_hands_q.append("one hand at pelvis center touching herself")
-                        custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
-
+            elif any(k in up for k in ("M字", "m字", "坐在地上", "坐姿", "坐")):
                 if custom_hands_q:
                     hand_q = f"with {', and '.join(custom_hands_q)}"
                     hand_a = f"{', '.join(custom_hands_a)}"
                 else:
                     hand_q = "with both hands resting on the floor beside her outer hips away from her crotch"
                     hand_a = "arms at sides, hands on floor"
-
                 pose_q = f"sitting on the floor in an M-shaped spread-legs pose (m legs) facing forward {hand_q}, entire full body inside the frame with white margins"
                 pose_a = f"1girl, solo, sitting, sitting on floor, m legs, spread legs, knees up, {hand_a}, full frontal"
             elif any(k in up for k in ("跪", "挺胸")):
-                pose_q = "kneeling upright on both knees facing forward with her back arched and arms behind her back, entire full body inside the frame"
-                pose_a = "1girl, solo, kneeling, arched back, arms behind back, chest out, full frontal"
+                if custom_hands_q:
+                    hand_q = f"with {', and '.join(custom_hands_q)}"
+                    hand_a = f"{', '.join(custom_hands_a)}"
+                    pose_q = f"kneeling on both knees facing forward with her head slightly tilted up {hand_q}, entire full body inside the frame"
+                    pose_a = f"1girl, solo, kneeling, looking up, {hand_a}, full frontal"
+                else:
+                    pose_q = "kneeling upright on both knees facing forward with her back arched and arms behind her back, entire full body inside the frame"
+                    pose_a = "1girl, solo, kneeling, arched back, arms behind back, chest out, full frontal"
             elif any(k in up for k in ("趴", "四肢着地", "后入")):
                 pose_q = "on all fours on the floor with her hips raised high and head turned to look back at the viewer"
                 pose_a = "1girl, solo, all fours, doggy style, top-down bottom-up, looking back, arched back"
             elif any(k in up for k in ("仰卧", "躺")):
-                pose_q = "lying on her back with both legs raised and spread wide apart, hands holding the backs of her outer knees"
-                pose_a = "1girl, solo, on back, lying, spread legs, legs up, grabbing own knees"
+                if custom_hands_q:
+                    hand_q = f"with {', and '.join(custom_hands_q)}"
+                    hand_a = f"{', '.join(custom_hands_a)}"
+                else:
+                    hand_q = "hands holding the backs of her outer knees"
+                    hand_a = "grabbing own knees"
+                pose_q = f"lying on her back with both legs raised and spread wide apart, {hand_q}"
+                pose_a = f"1girl, solo, on back, lying, spread legs, legs up, {hand_a}"
+            else:
+                # Standing or default pose
+                if custom_hands_q:
+                    hand_q = f"with {', and '.join(custom_hands_q)}"
+                    hand_a = f"{', '.join(custom_hands_a)}"
+                    pose_q = f"standing facing forward {hand_q}, entire full body inside the frame"
+                    pose_a = f"1girl, solo, standing, {hand_a}, full frontal"
         has_active_motion = any(k in up for k in ("并起伏", "上下起伏", "骑乘", "弹跳", "律动", "抽插", "抽送", "摇晃", "摆动", "挺腰"))
         is_default_breath_suffix = up.endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏")
         if has_active_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃"))):

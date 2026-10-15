@@ -2044,6 +2044,11 @@
           "name": "reference_image",
           "type": "IMAGE",
           "link": 45
+        },
+        {
+          "name": "custom_pose_name",
+          "type": "STRING",
+          "link": 53
         }
       ],
       "outputs": [
@@ -2249,7 +2254,8 @@
           "name": "llm_client",
           "type": "LLM_CLIENT",
           "links": [
-            46
+            46,
+            49
           ]
         }
       ],
@@ -2291,6 +2297,180 @@
       },
       "widgets_values": [],
       "title": "【阶段 1 产物预览·Anima二次元定稿单帧】"
+    },
+    {
+      "id": 42,
+      "type": "AsepriteNSFWPoseLibrary",
+      "pos": [
+        -2000,
+        50
+      ],
+      "size": [
+        450,
+        160
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "pose_image",
+          "type": "IMAGE",
+          "links": [
+            48
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteNSFWPoseLibrary"
+      },
+      "widgets_values": [
+        "solo_m_legs_sit (单人·M字开腿坐地抚腿娇喘)",
+        true
+      ]
+    },
+    {
+      "id": 65,
+      "type": "AsepriteLLMPoseGenerator",
+      "pos": [
+        -2000,
+        260
+      ],
+      "size": [
+        450,
+        250
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "llm_client",
+          "type": "LLM_CLIENT",
+          "link": 49
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pose_images",
+          "type": "IMAGE",
+          "links": [
+            50
+          ]
+        },
+        {
+          "name": "pose_keypoints",
+          "type": "POSE_KEYPOINT",
+          "links": []
+        },
+        {
+          "name": "pose_summary",
+          "type": "STRING",
+          "links": [
+            51
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteLLMPoseGenerator"
+      },
+      "widgets_values": [
+        "双膝跪在地上，身体前倾微仰头，双手举在嘴前握住肉棒并含入口中",
+        1,
+        "pingpong",
+        512,
+        768,
+        "black",
+        true,
+        ""
+      ]
+    },
+    {
+      "id": 66,
+      "type": "AsepritePoseSelector",
+      "pos": [
+        -2000,
+        560
+      ],
+      "size": [
+        450,
+        180
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "preset_pose_image",
+          "type": "IMAGE",
+          "link": 48
+        },
+        {
+          "name": "preset_pose_name",
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "name": "llm_pose_image",
+          "type": "IMAGE",
+          "link": 50
+        },
+        {
+          "name": "llm_pose_summary",
+          "type": "STRING",
+          "link": 51
+        }
+      ],
+      "outputs": [
+        {
+          "name": "active_pose_image",
+          "type": "IMAGE",
+          "links": [
+            52
+          ]
+        },
+        {
+          "name": "active_pose_name",
+          "type": "STRING",
+          "links": [
+            53
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepritePoseSelector"
+      },
+      "widgets_values": [
+        "llm_generated (使用阶段0自然语言生成的动作)"
+      ]
+    },
+    {
+      "id": 67,
+      "type": "PreviewImage",
+      "pos": [
+        -1500,
+        720
+      ],
+      "size": [
+        320,
+        380
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 52
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -2669,6 +2849,54 @@
       62,
       0,
       "IMAGE"
+    ],
+    [
+      48,
+      42,
+      0,
+      66,
+      0,
+      "IMAGE"
+    ],
+    [
+      49,
+      60,
+      0,
+      65,
+      0,
+      "LLM_CLIENT"
+    ],
+    [
+      50,
+      65,
+      0,
+      66,
+      2,
+      "IMAGE"
+    ],
+    [
+      51,
+      65,
+      2,
+      66,
+      3,
+      "STRING"
+    ],
+    [
+      52,
+      66,
+      0,
+      67,
+      0,
+      "IMAGE"
+    ],
+    [
+      53,
+      66,
+      1,
+      33,
+      2,
+      "STRING"
     ]
   ],
   "groups": [
@@ -2676,10 +2904,10 @@
       "id": 1,
       "title": "【阶段 0】统一 LLM 客户端与控制中心",
       "bounding": [
-        -1530,
+        -2030,
         -680,
-        630.8404296875,
-        1375
+        1000,
+        1850
       ],
       "color": "#2a5b84",
       "font_size": 26,
