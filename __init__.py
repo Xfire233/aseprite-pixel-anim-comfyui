@@ -1344,6 +1344,7 @@ class AsepriteLLMPromptDirector:
             anima_neg = re.sub(r"\b(hands between legs|hands covering crotch|hands on inner thighs)\b\s*,?", "", anima_neg, flags=re.IGNORECASE).strip(" ,")
         elif "hands covering crotch" not in anima_neg:
             anima_neg = f"{anima_neg}, hands between legs, hands covering crotch, hands on inner thighs"
+        wan_pos = _expand(parsed.get("wan_positive", ""))
         if not wan_pos:
             wan_pos = f"anime style, {macros['wan_subject']} on a plain white background, {pose_w_local}, static camera, fixed composition, full body, clean 2D anime illustration"
         wan_neg = _expand(parsed.get("wan_negative", ""))
