@@ -44,11 +44,17 @@ DEFAULT_MODELS = [os.environ.get("LLM_MODEL", "")] if os.environ.get("LLM_MODEL"
 
 DEFAULT_SYSTEM_PROMPT = """你是一个专精于 Anima (Danbooru Tag 图像模型) 与 Wan2.2 I2V (图生视频动作模型) 的提示词编译器。
 角色固定外观与服装标签已预置为宏 `{{CHARCARD_ANIMA_TAGS}}`，固定负面冲突词已预置为宏 `{{CHARCARD_NEG_TAGS}}`，角色英文主语已预置为宏 `{{CHARCARD_WAN_SUBJECT}}`。
-请根据用户输入的【中文姿势与动作描述】，将其中的姿势、视角、表情与动作轨迹编译为英文，并严格以 JSON 格式输出以下 4 个字段（保留宏名原样输出，由本地后处理器自动展开，不要输出任何额外解释）：
+
+【体型与服装一致性红线（严禁 OOC，精炼去重）】：
+1. 角色体型一致性：严格维护角色原设身材！若角色为平胸/娇小身材（如 Shinozaki Hiro），正面提示词严禁出现任何大胸描述，负面词必须包含 `large breasts, huge breasts`，绝不可被 NSFW LoRA 误导变异为巨乳！
+2. 精准脱衣：若用户仅要求“下身不穿裤子/下装暴露”，只脱下半身（bottomless, no panties, bare legs），上衣保持原样；严禁在用户未明确要求脱上衣时擅自添加 topless 或 exposed breasts！
+3. 严禁冗余堆叠：去除所有重复出现的 tag，保持提示词精炼、聚焦。
+
+请根据用户输入的【中文姿势与动作描述】，严格以 JSON 格式输出以下 4 个字段（保留宏名原样输出）：
 {
-  "anima_positive": "masterpiece, best quality, score_9, score_8, newest, {{CHARCARD_ANIMA_TAGS}}, <根据用户描述转换的姿势/肢体位置/表情/视角Danbooru英文标签>, full body, white background, simple background, character in center with margins around body",
+  "anima_positive": "masterpiece, best quality, score_9, score_8, newest, {{CHARCARD_ANIMA_TAGS}}, <精确姿势与视角标签，精炼无重复>, full body, white background, simple background",
   "anima_negative": "worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, censored, mosaic censoring, bar censor, multiple girls, 2girls, cropped, out of frame, bad anatomy, extra limbs, {{CHARCARD_NEG_TAGS}}",
-  "wan_positive": "anime style, {{CHARCARD_WAN_SUBJECT}} <用英文自然语言描述当前所处姿势与表情> on a plain white background, <用英文自然语言描述单程半周期柔和运动轨迹，不要堆砌tag>, static camera, fixed composition, full body, clean 2D anime illustration, smooth subtle motion",
+  "wan_positive": "anime style, {{CHARCARD_WAN_SUBJECT}} <当前姿势与表情> on a plain white background, <柔和微动轨迹，不堆砌tag>, static camera, fixed composition, full body, clean 2D anime illustration, smooth subtle motion",
   "wan_negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"
 }"""
 
@@ -1012,13 +1018,36 @@ class AsepriteLLMPromptDirector:
             macros["anima_tags"] = re.sub(r"\bsolo\b\s*,?", "", macros.get("anima_tags", "")).strip(" ,")
         neg_multi = "" if is_duo else "multiple girls, 2girls, "
 
-        anima_pos = (
-            f"Picture 1 is the character reference ({macros['wan_subject']}). "
-            f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
-            f"and redraw her in the pose of Picture 2: {pose_q}. "
-            f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, "
-            f"{macros['anima_tags']}, {pose_a}, full body, white background, simple background, character in center with margins around body"
-        ).strip(" ,")
+        # Enforce character body build & breast size consistency to prevent NSFW LoRA OOC distortion
+        is_petite = any(k in str(macros).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
+        if is_petite:
+            if "small breasts" not in macros.get("anima_tags", "").lower():
+                macros["anima_tags"] = f"small breasts, flat chest, slender, {macros['anima_tags']}"
+            if "large breasts" not in macros.get("neg_tags", "").lower():
+                macros["neg_tags"] = f"large breasts, huge breasts, {macros['neg_tags']}"
+            if "small" not in pose_q.lower() and "flat" not in pose_q.lower():
+                pose_q = f"{pose_q}, slender flat-chested petite build with small flat breasts"
+
+        # Deduplicate tags to avoid token budget bloat
+        raw_tokens = [t.strip() for t in f"{macros['anima_tags']}, {pose_a}, full body, white background, simple background".split(",") if t.strip()]
+        dedup_tags = ", ".join(dict.fromkeys(raw_tokens))
+
+        is_single_image = (pose_id == "none") or (not pose_meta)
+        if is_single_image:
+            anima_pos = (
+                f"2D flat cel-shaded anime illustration, clean anime lineart. "
+                f"Keep the exact 2D anime character identity, face, hair, and accessories from image 1 ({macros['wan_subject']}). "
+                f"Redraw her: {pose_q}. "
+                f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
+            ).strip(" ,")
+        else:
+            anima_pos = (
+                f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
+                f"and redraw her in the pose of Picture 2: {pose_q}. "
+                f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
+            ).strip(" ,")
+
         anima_neg = f"worst quality, low quality, score_1, score_2, score_3, realistic, 3d, blurry, jpeg artifacts, sepia, {neg_multi}cropped, out of frame, bad anatomy, extra limbs, hands between legs, hands covering crotch, hands on inner thighs, {macros['neg_tags']}".strip(" ,")
         wan_pos = f"anime style, {macros['wan_subject']} {pose_q.split(',')[0]} on a plain white background, {pose_w}, static camera, fixed composition, full body, clean 2D anime illustration".strip(" ,")
         wan_neg = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"
@@ -1148,16 +1177,34 @@ class AsepriteLLMPromptDirector:
             return out
 
         anima_pos = _expand(parsed.get("anima_positive", ""))
+        is_single_image = (pose_id == "none") or (not pose_meta)
         if "picture 1" not in anima_pos.lower() and "image 1" not in anima_pos.lower():
-            anima_pos = (
-                f"Picture 1 is the character reference ({macros['wan_subject']}). "
-                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
-                f"and redraw her in the pose of Picture 2 ({pose_q_local}). {anima_pos}"
-            )
-        if macros["anima_tags"] and (macros["anima_tags"][:25] not in anima_pos):
-            anima_pos = f"{anima_pos}, {macros['anima_tags']}"
-        if pose_a_local and (pose_a_local[:20] not in anima_pos):
-            anima_pos = f"{anima_pos}, {pose_a_local}"
+            if is_single_image:
+                anima_pos = (
+                    f"2D flat cel-shaded anime illustration, clean anime lineart. "
+                    f"Keep the exact 2D anime character identity, face, hair, and accessories from image 1 ({macros['wan_subject']}). "
+                    f"Redraw her in the pose: {pose_q_local}. {anima_pos}"
+                )
+            else:
+                anima_pos = (
+                    f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                    f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
+                    f"and redraw her in the pose of Picture 2 ({pose_q_local}). {anima_pos}"
+                )
+        elif is_single_image:
+            anima_pos = re.sub(r"in the pose of Picture 2\s*(\([^\)]*\))?", "in the requested pose", anima_pos, flags=re.IGNORECASE)
+
+        # Enforce body build / breast size consistency & prevent NSFW LoRA OOC explosion
+        is_petite = any(k in str(macros).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
+        if is_petite:
+            anima_pos = re.sub(r"\b(large breasts|huge breasts|cleavage)\b\s*,?", "", anima_pos, flags=re.IGNORECASE)
+            if "flat chest" not in anima_pos.lower():
+                anima_pos = f"{anima_pos}, small breasts, flat chest, slender"
+
+        # Clean deduplication
+        raw_tokens = [t.strip() for t in anima_pos.split(",") if t.strip()]
+        anima_pos = ", ".join(dict.fromkeys(raw_tokens))
+
         # Strip any crotch-occluding hand phrases that LLM may have generated from '双手撑在大腿上'
         for bad_h, good_h in [
             ("with both hands resting on her thighs", "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"),
@@ -1168,6 +1215,8 @@ class AsepriteLLMPromptDirector:
         ]:
             anima_pos = anima_pos.replace(bad_h, good_h)
         anima_neg = _expand(parsed.get("anima_negative", ""))
+        if is_petite and "large breasts" not in anima_neg.lower():
+            anima_neg = f"large breasts, huge breasts, {anima_neg}"
         if is_duo:
             anima_neg = re.sub(r"\b(multiple girls|2girls)\b\s*,?", "", anima_neg).strip(" ,")
         if "hands covering crotch" not in anima_neg:

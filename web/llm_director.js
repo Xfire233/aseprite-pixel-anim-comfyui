@@ -257,10 +257,10 @@ app.registerExtension({
         }
 
         if (nodeData.name === "AsepriteStageBridge") {
-            const origCreated = nodeType.prototype.onNodeCreated;
-            nodeType.prototype.onNodeCreated = function () {
-                const r = origCreated ? origCreated.apply(this, arguments) : undefined;
-                this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
+            const addBridgeButtons = (node) => {
+                if (node._bridgeButtonsAdded) return;
+                node._bridgeButtonsAdded = true;
+                node.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
                     const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
                     if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
                         node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
@@ -271,7 +271,7 @@ app.registerExtension({
                     }
                 }).serialize = false;
 
-                this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
+                node.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
                     const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
                     if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
                         node2.widgets[1].value = Math.floor(Math.random() * 1e14);
@@ -281,6 +281,18 @@ app.registerExtension({
                         alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
                     }
                 }).serialize = false;
+            };
+
+            const origCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = origCreated ? origCreated.apply(this, arguments) : undefined;
+                addBridgeButtons(this);
+                return r;
+            };
+            const origConf = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const r = origConf ? origConf.apply(this, arguments) : undefined;
+                addBridgeButtons(this);
                 return r;
             };
             return;
@@ -520,6 +532,29 @@ app.registerExtension({
                 }
             });
             tplBtn.serialize = false;
+            const r1bBtn = this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
+                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+                if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
+                    node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
+                    app.graph.setDirtyCanvas(true, true);
+                    app.queuePrompt(0);
+                } else {
+                    alert("未找到 Stage 1B (Anima) KSampler 节点！");
+                }
+            });
+            r1bBtn.serialize = false;
+
+            const r2Btn = this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
+                const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
+                if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
+                    node2.widgets[1].value = Math.floor(Math.random() * 1e14);
+                    app.graph.setDirtyCanvas(true, true);
+                    app.queuePrompt(0);
+                } else {
+                    alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
+                }
+            });
+            r2Btn.serialize = false;
             const origConf = this.onConfigure;
             this.onConfigure = function () {
                 const rc = origConf ? origConf.apply(this, arguments) : undefined;

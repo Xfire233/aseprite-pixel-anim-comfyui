@@ -8,8 +8,8 @@
       "id": 1,
       "type": "UNETLoader",
       "pos": [
-        -1150,
-        -215
+        -1350,
+        -210
       ],
       "size": [
         360,
@@ -75,8 +75,8 @@
       "id": 2,
       "type": "CLIPLoader",
       "pos": [
-        -1150,
-        575
+        -1350,
+        610
       ],
       "size": [
         360,
@@ -154,8 +154,8 @@
       "id": 3,
       "type": "VAELoader",
       "pos": [
-        -1150,
-        730
+        -1350,
+        770
       ],
       "size": [
         360,
@@ -212,7 +212,7 @@
       "id": 4,
       "type": "QwenEditFastConditioning",
       "pos": [
-        -650,
+        -850,
         -600
       ],
       "size": [
@@ -352,8 +352,8 @@
       "id": 7,
       "type": "KSampler",
       "pos": [
-        -650,
-        -345
+        -850,
+        -340
       ],
       "size": [
         360,
@@ -486,8 +486,8 @@
       "id": 8,
       "type": "VAEDecodeTiled",
       "pos": [
-        -650,
-        -30
+        -850,
+        -20
       ],
       "size": [
         360,
@@ -585,8 +585,8 @@
       "id": 9,
       "type": "SaveImage",
       "pos": [
-        -100,
-        2060
+        -300,
+        2130
       ],
       "size": [
         360,
@@ -637,7 +637,7 @@
       "id": 12,
       "type": "UNETLoader",
       "pos": [
-        500,
+        350,
         -600
       ],
       "size": [
@@ -704,8 +704,8 @@
       "id": 13,
       "type": "LoraLoaderModelOnly",
       "pos": [
-        500,
-        -465
+        350,
+        -460
       ],
       "size": [
         360,
@@ -778,8 +778,8 @@
       "id": 14,
       "type": "ModelSamplingSD3",
       "pos": [
-        500,
-        -330
+        350,
+        -320
       ],
       "size": [
         360,
@@ -834,8 +834,8 @@
       "id": 15,
       "type": "UNETLoader",
       "pos": [
-        500,
-        -80
+        350,
+        -60
       ],
       "size": [
         360,
@@ -901,8 +901,8 @@
       "id": 16,
       "type": "LoraLoaderModelOnly",
       "pos": [
-        500,
-        55
+        350,
+        80
       ],
       "size": [
         360,
@@ -975,8 +975,8 @@
       "id": 17,
       "type": "ModelSamplingSD3",
       "pos": [
-        500,
-        190
+        350,
+        220
       ],
       "size": [
         360,
@@ -1031,8 +1031,8 @@
       "id": 18,
       "type": "CLIPLoader",
       "pos": [
-        500,
-        440
+        350,
+        480
       ],
       "size": [
         330,
@@ -1111,8 +1111,8 @@
       "id": 19,
       "type": "VAELoader",
       "pos": [
-        500,
-        595
+        350,
+        640
       ],
       "size": [
         330,
@@ -1167,8 +1167,8 @@
       "id": 20,
       "type": "CLIPTextEncode",
       "pos": [
-        500,
-        710
+        350,
+        760
       ],
       "size": [
         330,
@@ -1223,8 +1223,8 @@
       "id": 21,
       "type": "CLIPTextEncode",
       "pos": [
-        500,
-        875
+        350,
+        930
       ],
       "size": [
         330,
@@ -1279,7 +1279,7 @@
       "id": 22,
       "type": "WanImageToVideo",
       "pos": [
-        1050,
+        950,
         -600
       ],
       "size": [
@@ -1430,8 +1430,8 @@
       "id": 23,
       "type": "KSamplerAdvanced",
       "pos": [
-        1050,
-        -315
+        950,
+        -310
       ],
       "size": [
         330,
@@ -1597,8 +1597,8 @@
       "id": 24,
       "type": "KSamplerAdvanced",
       "pos": [
-        1050,
-        70
+        950,
+        80
       ],
       "size": [
         330,
@@ -1764,8 +1764,8 @@
       "id": 25,
       "type": "VAEDecodeTiled",
       "pos": [
-        1050,
-        455
+        950,
+        470
       ],
       "size": [
         330,
@@ -1861,8 +1861,8 @@
       "id": 26,
       "type": "CreateVideo",
       "pos": [
-        1050,
-        650
+        950,
+        670
       ],
       "size": [
         360,
@@ -1965,8 +1965,8 @@
       "id": 27,
       "type": "SaveVideo",
       "pos": [
-        1050,
-        805
+        950,
+        830
       ],
       "size": [
         360,
@@ -2055,7 +2055,7 @@
       "id": 29,
       "type": "AsepritePixelizeAssemble",
       "pos": [
-        1600,
+        1500,
         -600
       ],
       "size": [
@@ -2226,8 +2226,8 @@
       "id": 30,
       "type": "PreviewImage",
       "pos": [
-        1600,
-        -195
+        1500,
+        -190
       ],
       "size": [
         380,
@@ -2264,8 +2264,8 @@
       "id": 33,
       "type": "AsepriteLLMPromptDirector",
       "pos": [
-        -1700,
-        85
+        -2000,
+        520
       ],
       "size": [
         560,
@@ -2362,8 +2362,8 @@
       "id": 34,
       "type": "LoraLoaderBypassModelOnly",
       "pos": [
-        -1150,
-        190
+        -1350,
+        210
       ],
       "size": [
         360,
@@ -2438,8 +2438,8 @@
       "id": 35,
       "type": "ModelSamplingAuraFlow",
       "pos": [
-        -1150,
-        460
+        -1350,
+        490
       ],
       "size": [
         360,
@@ -2506,7 +2506,7 @@
       "id": 36,
       "type": "LoadImage",
       "pos": [
-        -1150,
+        -1350,
         -600
       ],
       "size": [
@@ -2577,8 +2577,8 @@
       "id": 37,
       "type": "RISAAttention",
       "pos": [
-        -1150,
-        325
+        -1350,
+        350
       ],
       "size": [
         360,
@@ -2644,8 +2644,8 @@
       "id": 38,
       "type": "RISAAttention",
       "pos": [
-        500,
-        -215
+        350,
+        -200
       ],
       "size": [
         360,
@@ -2711,8 +2711,8 @@
       "id": 39,
       "type": "RISAAttention",
       "pos": [
-        500,
-        305
+        350,
+        340
       ],
       "size": [
         360,
@@ -2778,8 +2778,8 @@
       "id": 40,
       "type": "LoraLoaderBypassModelOnly",
       "pos": [
-        -1150,
-        55
+        -1350,
+        70
       ],
       "size": [
         360,
@@ -2845,8 +2845,8 @@
       "type": "LoraLoaderBypassModelOnly",
       "title": "【阶段 1A】Unchained-XXX 破甲 LoRA (0.72)",
       "pos": [
-        -1150,
-        -80
+        -1350,
+        -70
       ],
       "size": [
         360,
@@ -2892,12 +2892,12 @@
       "type": "AsepriteNSFWPoseLibrary",
       "title": "【阶段 0】骨骼预设库 (支持开/关骨骼姿势引导)",
       "pos": [
-        -1700,
-        -60
+        -2000,
+        -20
       ],
       "size": [
-        560,
-        100
+        540,
+        160
       ],
       "flags": {},
       "order": 2,
@@ -2926,8 +2926,8 @@
       "type": "UNETLoader",
       "title": "【阶段 1B】Anima Base v1.0 2D 动漫模型",
       "pos": [
-        -100,
-        -100
+        -300,
+        -90
       ],
       "size": [
         360,
@@ -2967,8 +2967,8 @@
       "type": "CLIPLoader",
       "title": "【阶段 1B】Qwen 3.06B 文本编码器",
       "pos": [
-        -100,
-        35
+        -300,
+        50
       ],
       "size": [
         360,
@@ -3009,7 +3009,7 @@
       "id": 46,
       "type": "DWPreprocessor",
       "pos": [
-        -100,
+        -300,
         -600
       ],
       "size": [
@@ -3058,8 +3058,8 @@
       "id": 47,
       "type": "AsepritePoseRegionMask",
       "pos": [
-        -100,
-        -305
+        -300,
+        -300
       ],
       "size": [
         360,
@@ -3100,8 +3100,8 @@
       "id": 48,
       "type": "StringConcatenate",
       "pos": [
-        -100,
-        540
+        -300,
+        570
       ],
       "size": [
         360,
@@ -3140,8 +3140,8 @@
       "id": 49,
       "type": "CLIPTextEncode",
       "pos": [
-        -100,
-        395
+        -300,
+        420
       ],
       "size": [
         360,
@@ -3183,8 +3183,8 @@
       "id": 50,
       "type": "CLIPTextEncode",
       "pos": [
-        -100,
-        735
+        -300,
+        770
       ],
       "size": [
         360,
@@ -3226,8 +3226,8 @@
       "id": 51,
       "type": "VAEEncode",
       "pos": [
-        -100,
-        880
+        -300,
+        920
       ],
       "size": [
         360,
@@ -3267,8 +3267,8 @@
       "id": 52,
       "type": "SetLatentNoiseMask",
       "pos": [
-        -100,
-        975
+        -300,
+        1020
       ],
       "size": [
         360,
@@ -3308,8 +3308,8 @@
       "id": 53,
       "type": "KSampler",
       "pos": [
-        -100,
-        1070
+        -300,
+        1120
       ],
       "size": [
         360,
@@ -3367,8 +3367,8 @@
       "id": 54,
       "type": "VAEDecodeTiled",
       "pos": [
-        -100,
-        1385
+        -300,
+        1440
       ],
       "size": [
         360,
@@ -3413,8 +3413,8 @@
       "id": 55,
       "type": "ImageCompositeMasked",
       "pos": [
-        -100,
-        1580
+        -300,
+        1640
       ],
       "size": [
         360,
@@ -3464,8 +3464,8 @@
       "type": "RegexReplace",
       "title": "【阶段 1B】Danbooru 纯净标签截取 (带防错位保护)",
       "pos": [
-        -100,
-        190
+        -300,
+        210
       ],
       "size": [
         360,
@@ -3508,8 +3508,8 @@
       "type": "RMBG",
       "title": "【阶段 1B】BiRefNet-2.0 纯净抠图 (白底去噪)",
       "pos": [
-        -100,
-        1765
+        -300,
+        1830
       ],
       "size": [
         360,
@@ -3559,12 +3559,12 @@
       "type": "AsepriteCharcardExtractor",
       "title": "【阶段 0】角色卡提取器 (按需自动提取新卡)",
       "pos": [
-        -1700,
-        -315
+        -2000,
+        -310
       ],
       "size": [
-        560,
-        210
+        540,
+        240
       ],
       "flags": {},
       "order": 0,
@@ -3623,8 +3623,8 @@
       "id": 62,
       "type": "PreviewImage",
       "pos": [
-        -650,
-        165
+        -850,
+        180
       ],
       "size": [
         360,
@@ -3651,7 +3651,7 @@
       "id": 60,
       "type": "AsepriteLLMProvider",
       "pos": [
-        -1700,
+        -2000,
         -600
       ],
       "size": [
@@ -3667,7 +3667,8 @@
           "name": "llm_client",
           "type": "LLM_CLIENT",
           "links": [
-            86
+            86,
+            87
           ]
         }
       ],
@@ -3681,6 +3682,58 @@
         45
       ],
       "title": "【阶段 0】统一 LLM 客户端来源 (集中填写 URL & Key)"
+    },
+    {
+      "id": 65,
+      "type": "AsepriteLLMPoseGenerator",
+      "pos": [
+        -2000,
+        190
+      ],
+      "size": [
+        540,
+        280
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "llm_client",
+          "type": "LLM_CLIENT",
+          "link": 87
+        }
+      ],
+      "outputs": [
+        {
+          "name": "pose_images",
+          "type": "IMAGE",
+          "links": []
+        },
+        {
+          "name": "pose_keypoints",
+          "type": "POSE_KEYPOINT",
+          "links": []
+        },
+        {
+          "name": "pose_summary",
+          "type": "STRING",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "AsepriteLLMPoseGenerator"
+      },
+      "widgets_values": [
+        "sitting on the floor in an M-shaped spread legs pose, hands on outer knees, breathing gently",
+        1,
+        "pingpong",
+        512,
+        768,
+        "white",
+        true,
+        ""
+      ]
     }
   ],
   "links": [
@@ -4267,17 +4320,25 @@
       33,
       0,
       "LLM_CLIENT"
+    ],
+    [
+      87,
+      60,
+      0,
+      65,
+      0,
+      "LLM_CLIENT"
     ]
   ],
   "groups": [
     {
       "id": 1,
-      "title": "【阶段 0】统一 LLM 客户端与控制中心",
+      "title": "【阶段 0】统一 LLM 控制中心与动作生成",
       "bounding": [
-        -1730,
+        -2030,
         -680,
         620,
-        1530
+        1970
       ],
       "color": "#2a5b84",
       "font_size": 26,
@@ -4287,10 +4348,10 @@
       "id": 2,
       "title": "【阶段 1A】Qwen 模型加载与破甲 LoRA 配置",
       "bounding": [
-        -1180,
+        -1380,
         -680,
         620,
-        1565
+        1610
       ],
       "color": "#82561e",
       "font_size": 26,
@@ -4300,10 +4361,10 @@
       "id": 3,
       "title": "【阶段 1A】Qwen 姿态生成与重绘前原图检视",
       "bounding": [
-        -680,
+        -880,
         -680,
         420,
-        1410
+        1430
       ],
       "color": "#82561e",
       "font_size": 26,
@@ -4313,10 +4374,10 @@
       "id": 4,
       "title": "【阶段 1B】Anima 局部脱衣重绘与抠图定稿",
       "bounding": [
-        -130,
+        -330,
         -680,
         420,
-        3205
+        3280
       ],
       "color": "#6c2882",
       "font_size": 26,
@@ -4326,10 +4387,10 @@
       "id": 5,
       "title": "【阶段 2】Wan2.2 14B 双专家与提示词配置",
       "bounding": [
-        470,
+        320,
         -680,
         420,
-        1760
+        1820
       ],
       "color": "#226938",
       "font_size": 26,
@@ -4339,10 +4400,10 @@
       "id": 6,
       "title": "【阶段 2】Wan 4步采样与动作视频合成",
       "bounding": [
-        1020,
+        920,
         -680,
         420,
-        1850
+        1880
       ],
       "color": "#226938",
       "font_size": 26,
@@ -4352,10 +4413,10 @@
       "id": 7,
       "title": "【阶段 3】像素化抽取与 Aseprite 组装",
       "bounding": [
-        1570,
+        1470,
         -680,
         440,
-        1090
+        1100
       ],
       "color": "#84223d",
       "font_size": 26,
