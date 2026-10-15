@@ -17,6 +17,9 @@ def _detect_comfy_root() -> str:
     parent = os.path.dirname(PROJECT_ROOT)
     if os.path.basename(parent) == "custom_nodes" and os.path.exists(os.path.join(os.path.dirname(parent), "main.py")):
         return os.path.dirname(parent)
+    known = r"C:\baidunetdiskdownload\comfyui1.6\ComfyUI-aki-v1.6\ComfyUI"
+    if os.path.exists(os.path.join(known, "main.py")):
+        return known
     return ""
 
 

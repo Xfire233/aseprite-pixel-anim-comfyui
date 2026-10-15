@@ -34,9 +34,10 @@ function repairAssembleNode(node) {
 
 function repairDirectorNode(node) {
     if (!node) return;
+    const convertedSlots = new Set(["base_url", "api_key", "model", "charcard", "user_prompt", "pose_preset", "prompt_mode", "stage1_positive", "stage1_negative", "stage2_positive", "stage2_negative", "system_prompt"]);
     if (Array.isArray(node.inputs)) {
         for (let i = node.inputs.length - 1; i >= 0; i--) {
-            if (node.inputs[i]?.name === "system_prompt") {
+            if (convertedSlots.has(node.inputs[i]?.name)) {
                 node.removeInput(i);
             }
         }
@@ -46,11 +47,13 @@ function repairDirectorNode(node) {
     }
     const poseW = node.widgets?.find((w) => w.name === "pose_preset");
     const modeW = node.widgets?.find((w) => w.name === "prompt_mode");
-    // Sync with AsepriteNSFWPoseLibrary if present in graph
     const poseNode = app.graph?._nodes?.find((n) => n.type === "AsepriteNSFWPoseLibrary");
     const libPoseVal = poseNode?.widgets?.find((w) => w.name === "pose_preset")?.value;
+    const libEnableVal = poseNode?.widgets?.find((w) => w.name === "enable_pose_control")?.value;
     if (poseW) {
-        if (typeof poseW.value !== "string" || poseW.value.startsWith("compile_if_empty") || poseW.value.startsWith("auto_compile") || poseW.value.startsWith("manual_override")) {
+        if (libEnableVal === false) {
+            poseW.value = "none (不使用预设骨骼)";
+        } else if (typeof poseW.value !== "string" || poseW.value.startsWith("compile_if_empty") || poseW.value.startsWith("auto_compile") || poseW.value.startsWith("manual_override")) {
             poseW.value = libPoseVal || "solo_m_legs_sit (单人·M字开腿坐地抚腿娇喘)";
         } else if (libPoseVal && libPoseVal !== poseW.value) {
             poseW.value = libPoseVal;
@@ -63,9 +66,107 @@ function repairDirectorNode(node) {
     }
 }
 
+function hookPromptDialog() {
+    const CanvasClass = window.LGraphCanvas || (typeof app !== "undefined" && app.canvas?.constructor);
+    if (CanvasClass && !CanvasClass._asepritePromptHooked) {
+        CanvasClass._asepritePromptHooked = true;
+        const origPrompt = CanvasClass.prototype.prompt;
+        CanvasClass.prototype.prompt = function (title, value, callback, event) {
+            const isApiKey = (title && typeof title === "string" && title.toLowerCase().includes("key")) ||
+                             (event?.widget?.name && event.widget.name.toLowerCase().includes("key"));
+            const res = origPrompt.apply(this, arguments);
+            if (isApiKey) {
+                setTimeout(() => {
+                    const dialog = document.querySelector(".graphdialog");
+                    const input = dialog?.querySelector("input.value");
+                    if (input) {
+                        input.type = "password";
+                        input.setAttribute("autocomplete", "new-password");
+                        if (input.value === "••••••••••••••••" || input.value === "__SAVED__") {
+                            input.value = "";
+                            input.placeholder = "(已保存API Key，直接输入可覆盖)";
+                        }
+                    }
+                }, 10);
+            }
+            return res;
+        };
+    }
+}
+
+function maskApiKeyWidget(node) {
+    const key = node.widgets?.find((w) => w.name === "api_key" || w.name === "key");
+    if (!key || key._isMasked) return;
+    key._isMasked = true;
+    if (key.value && key.value !== "__SAVED__" && !/^[•*]+$/.test(key.value)) {
+        key._realValue = key.value;
+    } else {
+        key._realValue = key._realValue || "";
+    }
+
+    const persistKey = async () => {
+        const val = key._realValue;
+        if (!val || val === "__SAVED__") return;
+        if (key._savedValue !== val) {
+            key._savedValue = val;
+            key._savePromise = api.fetchApi("/aseprite_llm/save_key", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ api_key: val }),
+            }).then((resp) => resp.json()).catch((err) => { key._savedValue = null; throw err; });
+        }
+        await key._savePromise;
+    };
+
+    if (key.inputEl) {
+        key.inputEl.type = "password";
+        key.inputEl.setAttribute("autocomplete", "new-password");
+    }
+
+    const origCallback = key.callback;
+    key.callback = function (value) {
+        if (typeof value === "string" && !/^[•*]+$/.test(value) && !value.startsWith("(空")) {
+            key._realValue = value;
+            persistKey().catch((err) => console.warn("[AsepriteLLM] save_key failed:", err));
+        }
+        return origCallback?.apply(this, arguments);
+    };
+
+    key.serializeValue = async () => {
+        await persistKey();
+        return key._realValue ? "__SAVED__" : "";
+    };
+
+    const origSerialize = node.onSerialize;
+    node.onSerialize = function (data) {
+        origSerialize?.apply(this, arguments);
+        const index = this.widgets ? this.widgets.indexOf(key) : -1;
+        if (Array.isArray(data?.widgets_values) && index >= 0) {
+            data.widgets_values[index] = key._realValue ? "__SAVED__" : "";
+        }
+    };
+
+    const origDraw = key.draw;
+    key.draw = function (ctx, owner, width, y, height) {
+        const val = key._realValue || key.value;
+        const isSet = Boolean(val && val !== "(空 = 自动读已存Key)" && val !== "");
+        const origVal = key.value;
+        key.value = isSet ? "••••••••••••••••" : "(空 = 自动读已存Key)";
+        try {
+            return origDraw ? origDraw.call(this, ctx, owner, width, y, height) : undefined;
+        } finally {
+            key.value = origVal;
+        }
+    };
+}
+
 app.registerExtension({
     name: "aseprite.LLMPromptDirector",
+    init() {
+        hookPromptDialog();
+    },
     async beforeRegisterNodeDef(nodeType, nodeData) {
+        hookPromptDialog();
         if (nodeData.name === "AsepritePixelizeAssemble") {
             const origCreated = nodeType.prototype.onNodeCreated;
             nodeType.prototype.onNodeCreated = function () {
@@ -105,6 +206,68 @@ app.registerExtension({
             };
             return;
         }
+        if (nodeData.name === "RegexReplace") {
+            const origConf = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const r = origConf ? origConf.apply(this, arguments) : undefined;
+                const pat = this.widgets?.find((w) => w.name === "regex_pattern");
+                const rep = this.widgets?.find((w) => w.name === "replace");
+                if (pat && (!pat.value || pat.value === "")) {
+                    pat.value = "^[\\s\\S]*?(?=masterpiece)";
+                }
+                if (rep && rep.value === "true") {
+                    rep.value = "";
+                }
+                return r;
+            };
+            return;
+        }
+
+        if (nodeData.name === "AsepriteLLMPromptDirector") {
+            const origConf = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const r = origConf ? origConf.apply(this, arguments) : undefined;
+                maskApiKeyWidget(this);
+                repairDirectorNode(this);
+                return r;
+            };
+        }
+        if (nodeData.name === "AsepriteNSFWPoseLibrary") {
+            const origCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const r = origCreated ? origCreated.apply(this, arguments) : undefined;
+                const poseW = this.widgets?.find((w) => w.name === "pose_preset");
+                const enableW = this.widgets?.find((w) => w.name === "enable_pose_control");
+                const syncToDirector = () => {
+                    const dirNode = app.graph?._nodes?.find((n) => n.type === "AsepriteLLMPromptDirector");
+                    if (dirNode) {
+                        const dPose = dirNode.widgets?.find((w) => w.name === "pose_preset");
+                        const dMode = dirNode.widgets?.find((w) => w.name === "prompt_mode");
+                        if (dPose) {
+                            dPose.value = (enableW?.value === false) ? "none (不使用预设骨骼)" : (poseW?.value || "none (不使用预设骨骼)");
+                        }
+                        if (dMode) dMode.value = "auto_compile (LLM编译并自动回填下方文本框)";
+                        app.graph.setDirtyCanvas(true, true);
+                    }
+                };
+                if (poseW) {
+                    const origCb = poseW.callback;
+                    poseW.callback = function (v) {
+                        syncToDirector();
+                        if (origCb) return origCb.apply(this, arguments);
+                    };
+                }
+                if (enableW) {
+                    const origEnableCb = enableW.callback;
+                    enableW.callback = function (v) {
+                        syncToDirector();
+                        if (origEnableCb) return origEnableCb.apply(this, arguments);
+                    };
+                }
+                return r;
+            };
+            return;
+        }
 
         if (nodeData.name !== "AsepriteLLMPromptDirector") return;
 
@@ -134,50 +297,45 @@ app.registerExtension({
                     };
                 }
             });
-            if (apiKeyWidget) {
-                apiKeyWidget._realValue = apiKeyWidget.value || "";
+            maskApiKeyWidget(this);
 
-                if (apiKeyWidget.inputEl) {
-                    apiKeyWidget.inputEl.type = "password";
-                }
-
-                const origCallback = apiKeyWidget.callback;
-                apiKeyWidget.callback = function (v) {
-                    if (typeof v === "string" && !/^[•*]+$/.test(v) && !v.startsWith("(空")) {
-                        apiKeyWidget._realValue = v;
-                    } else if (v === "") {
-                        apiKeyWidget._realValue = "";
+            const setKeyBtn = this.addWidget("button", "🔑 点击设置 / 修改 API Key", null, async () => {
+                const currentVal = apiKeyWidget?._realValue || "";
+                const userKey = window.prompt("请输入您的 API Key (OpenAI 兼容接口密钥，留空则清空使用本地配置)：", currentVal);
+                if (userKey !== null) {
+                    const trimmed = userKey.trim();
+                    if (apiKeyWidget) {
+                        apiKeyWidget._realValue = trimmed;
+                        apiKeyWidget.value = trimmed ? "••••••••••••••••" : "(空 = 自动读已存Key)";
                     }
-                    if (origCallback) return origCallback.apply(this, arguments);
-                };
-
-                apiKeyWidget.serializeValue = () => {
-                    const val = apiKeyWidget.value;
-                    if (typeof val === "string" && val && !/^[•*]+$/.test(val) && !val.startsWith("(空")) {
-                        apiKeyWidget._realValue = val;
-                    }
-                    return apiKeyWidget._realValue || "";
-                };
-
-                const origDraw = apiKeyWidget.draw;
-                apiKeyWidget.draw = function (ctx, node, widgetWidth, y, H) {
-                    const savedVal = apiKeyWidget.value;
-                    if (typeof savedVal === "string" && savedVal && !/^[•*]+$/.test(savedVal) && !savedVal.startsWith("(空")) {
-                        apiKeyWidget._realValue = savedVal;
-                    }
-                    apiKeyWidget.value = apiKeyWidget._realValue ? "••••••••••••••••" : "(空 = 自动读已存Key)";
                     try {
-                        if (origDraw) {
-                            return origDraw.call(this, ctx, node, widgetWidth, y, H);
+                        await api.fetchApi("/aseprite_llm/save_key", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ api_key: trimmed }),
+                        });
+                        if (trimmed) {
+                            alert("API Key 已成功设置并安全保存！");
+                        } else {
+                            alert("API Key 已清空（将使用本地环境变量或默认配置）。");
                         }
-                    } finally {
-                        apiKeyWidget.value = apiKeyWidget._realValue || "";
+                    } catch (e) {
+                        alert(`保存 API Key 异常: ${e}`);
+                    }
+                    app.graph.setDirtyCanvas(true, true);
+                }
+            });
+            setKeyBtn.serialize = false;
+            if (apiKeyWidget) {
+                apiKeyWidget.mouse = function (event) {
+                    if (event.type === "pointerdown" || event.type === "mousedown") {
+                        setKeyBtn.callback();
+                        return true;
                     }
                 };
             }
 
             const fillPromptWidgets = (prompts) => {
-                if (!Array.isArray(prompts) || prompts.length < 4) return;
                 const names = ["stage1_positive", "stage1_negative", "stage2_positive", "stage2_negative"];
                 names.forEach((n, idx) => {
                     const w = this.widgets?.find((item) => item.name === n);

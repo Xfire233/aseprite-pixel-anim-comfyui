@@ -44,9 +44,9 @@ POSE_AND_META_TAGS = {
 }
 
 LOWER_CLOTHING_TAGS = {
-    "shorts", "denim shorts", "short shorts", "blue shorts", "skirt", "pleated skirt", "miniskirt",
+    "denim", "shorts", "denim shorts", "short shorts", "blue shorts", "skirt", "pleated skirt", "miniskirt",
     "pants", "trousers", "jeans", "panties", "underwear", "bikini", "black bikini", "swimsuit",
-    "pantyhose", "thighhighs", "leggings", "bloomers", "sarong", "dress", "white dress",
+    "pantyhose", "thighhighs", "leggings", "bloomers", "sarong", "dress", "white dress", "denim skirt",
 }
 
 UPPER_UNDER_TAGS = {
@@ -219,13 +219,18 @@ def build_charcard_from_wd14(
         neg_extra = []
         outfit_nsfw_desc = f"wearing {', '.join(cloth_tags)}"
     else:
+        outer_str = f"open {', '.join(kept_outer)} slipped off shoulders, " if kept_outer else ""
         nsfw_tags = base_id + kept_outer + [
             "nsfw", "breasts out", "nipples", "bottomless", "no panties", "nude lower body", "pussy", "uncensored", "bare legs"
         ]
-        neg_extra = ["bra", "bikini", "panties", "underwear", "shorts", "denim shorts", "skirt", "pants"]
-        outer_str = f"open {', '.join(kept_outer)} slipped off shoulders, " if kept_outer else ""
+        neg_extra = ["bra", "bikini", "panties", "underwear", "shorts", "denim", "denim shorts", "denim skirt", "skirt", "pants"]
         outfit_nsfw_desc = f"{outer_str}completely topless and bottomless with exposed breasts, pink nipples, no panties, and exposed bare pussy"
 
+    is_petite = any(t in wd14_info.get("general_tags", []) for t in ["flat chest", "small breasts", "petite"]) or any(w in card_name.lower() for w in ["hiro", "small", "flat"])
+    if is_petite and "keep_original" not in nsfw_preset:
+        if "small breasts" not in nsfw_tags:
+            nsfw_tags.extend(["small breasts", "flat chest", "slender"])
+        neg_extra.extend(["large breasts", "huge breasts"])
     id_str = ", ".join(id_tags[:12]) if id_tags else "anime girl"
     cloth_str = ", ".join(cloth_tags[:10]) if cloth_tags else "casual anime outfit"
 
@@ -249,20 +254,29 @@ def build_charcard_from_wd14(
 def extract_charcard(
     pil_im: Image.Image,
     card_name: str = "custom_char",
-    nsfw_preset: str = "topless_and_bottomless",
+    nsfw_preset: str = "auto",
     use_llm: bool = True,
     base_url: str = "",
     api_key: str = "",
     model: str = "",
+    user_prompt: str = "",
     save_to_disk: bool = True,
 ) -> tuple[dict, str]:
-    """Extracts a complete charcard dict (and optionally saves scripts/charcard_<card_name>.json)."""
+    """Extracts a complete charcard dict guided by the user's prompt intent."""
+    wants_strip = True
+    if user_prompt and user_prompt.strip():
+        up_lower = user_prompt.lower()
+        explicit_strip = any(k in user_prompt for k in ("脱", "裸", "不穿", "露出", "全裸", "下身暴露", "胸部暴露", "私处")) or any(k in up_lower for k in ("nsfw", "bottomless", "topless", "nude", "pussy", "nipple"))
+        explicit_pose_nsfw = any(k in user_prompt for k in ("m字", "骑乘", "开腿", "深蹲", "娇喘", "自慰", "抽插"))
+        wants_strip = explicit_strip or explicit_pose_nsfw
+
+    wd14_preset = "topless_and_bottomless" if wants_strip else "keep_original_outfit"
     wd14_info = run_local_wd14(pil_im)
-    fallback_card = build_charcard_from_wd14(card_name, wd14_info, nsfw_preset=nsfw_preset)
+    fallback_card = build_charcard_from_wd14(card_name, wd14_info, nsfw_preset=wd14_preset)
 
     base_url = (base_url or LLM_BASE_URL).strip()
     if use_llm and not (base_url and model):
-        print("[extract_charcard] No LLM endpoint/model configured (--base-url/--model or LLM_BASE_URL/LLM_MODEL); using local WD14 only.")
+        print("[extract_charcard] No LLM endpoint/model configured; using local WD14 only.")
         use_llm = False
     if use_llm:
         resolved_key = resolve_api_key(api_key)
@@ -276,18 +290,25 @@ def extract_charcard(
             f"- 角色特征标签: {', '.join(wd14_info['identity_tags'])}\n"
             f"- 原始服装标签: {', '.join(wd14_info['clothing_tags'])}\n"
         )
+        user_intent_hint = f"\n【用户当前动作与服装具体意图】\n\"{user_prompt}\"\n" if user_prompt else ""
         sys_prompt = (
             "你是一个专业的二次元角色设定卡（Charcard）提取器，服务于 Anima (Danbooru Tag 模型)、Qwen-Image-Edit 与 Wan2.2 视频模型。\n"
-            "用户会提供一张包含【左：全身图 | 右：头部与上半身特写】的角色参考图，以及本地 WD14 预检测标签。\n"
-            "请仔细观察图片（尤其是右侧特写中的发色、发长、发型、刘海、发卡/发饰形状与颜色、瞳色、眼镜/耳环/项圈、胸围体型、外套/上衣/下装/鞋袜细节），"
-            "输出严格符合以下结构的 JSON 对象（所有标签与描述均为英文，不要输出任何额外解释）：\n"
+            "用户会提供一张包含【左：全身图 | 右：头部与上半身特写】的角色参考图，以及本地 WD14 预检测标签与用户的具体需求。\n"
+            f"{user_intent_hint}"
+            "请仔细观察图片（尤其是发型、发色、刘海、发饰形状与颜色、项圈/饰品、瞳色、面部气质、胸围身材体型：如 flat chest / small breasts / petite 或 large breasts，以及服装）：\n"
+            "1. 知名角色识别：如果能认出是知名动漫角色（如偶像大师、原神、碧蓝航线、蔚蓝档案、初音未来等），必须在 card 与 anima_tags 中指明角色名字（例如 Shinozaki Hiro, Gakuen Idolmaster）！\n"
+            "2. 身材体型：如果是平胸/娇小身材，必须在 card 中写明 slender flat-chested petite build，在 anima_nsfw_tags 中加入 small breasts, flat chest, slender，并在 negative_tags 中封禁 large breasts, huge breasts！\n"
+            "3. 服装处理策略：\n"
+            "   - 若用户要求脱衣/下装裸露/不穿裤子：outfit_nsfw 必须完全脱去下装与内裤（完全裸腹、私处与双腿暴露），保留滑落的外套/项圈，严禁包含任何下装词与材质词（如 denim, shorts, jeans, pants, skirt, panties）！在 anima_nsfw_tags 中完全剔除所有下装与材质词，在 negative_tags 中封禁 panties, underwear, shorts, denim, denim shorts, denim skirt, skirt, pants, jeans！\n"
+            "   - 若用户要求正常着装（未要求脱衣）：outfit_nsfw 保持原始完整着装，anima_nsfw_tags 保持正常着装标签，不添加暴露词条，negative_tags 不封禁下装。\n"
+            "输出严格符合以下结构的 JSON 对象（所有字段均为英文，不要输出任何额外解释）：\n"
             "{\n"
-            '  "card": "<用英文自然语言详细描述角色的固定外貌特征：发型、发色、刘海、发饰/眼镜/项圈、瞳色、面部气质与胸围身材（不含可脱衣物）>",\n'
-            '  "outfit": "<用英文自然语言详细描述参考图中角色的原始完整着装>",\n'
-            '  "outfit_nsfw": "<用英文自然语言描述该角色处于敞开外套/脱去内衣与下装后的NSFW暴露状态（保留标志性发饰/项圈/敞开的外套，完全暴露胸部、乳头与无内裤私处）>",\n'
-            '  "anima_tags": "1girl, solo, <精确的Danbooru角色固定外貌标签 + 原始服装标签>",\n'
-            '  "anima_nsfw_tags": "1girl, solo, <精确的Danbooru角色固定外貌标签 + 保留的敞开外套/配饰标签>, nsfw, breasts out, nipples, bottomless, no panties, nude lower body, pussy, uncensored, bare legs",\n'
-            '  "negative_tags": "censored, mosaic censoring, bar censor, panties, underwear, shorts, skirt, pants, bra, bikini, <与角色胸围/特征相反的冲突标签>",\n'
+            '  "card": "<英文详细描述角色的固定外貌特征与胸围身材（不含可脱下装）>",\n'
+            '  "outfit": "<英文详细描述角色的原始完整着装>",\n'
+            '  "outfit_nsfw": "<英文描述角色的服装状态（脱衣或保持原装）>",\n'
+            '  "anima_tags": "1girl, solo, <Danbooru角色外貌标签 + 原始服装标签>",\n'
+            '  "anima_nsfw_tags": "1girl, solo, <Danbooru角色外貌与服装状态标签>",\n'
+            '  "negative_tags": "censored, mosaic censoring, bar censor, <被脱掉的服装词与冲突体型词>",\n'
             '  "wan_subject": "the cute anime girl with <简明英文概括发色、发型、标志性发饰与瞳色>"\n'
             "}"
         )
@@ -365,6 +386,23 @@ def extract_charcard(
                         break
             except Exception as e:
                 print(f"[extract_charcard] LLM ({ep}) fallback to local WD14: {e}")
+
+    if wants_strip:
+        raw_nsfw = fallback_card.get("anima_nsfw_tags", "")
+        if raw_nsfw:
+            cleaned_tokens = [
+                t.strip() for t in raw_nsfw.split(",")
+                if t.strip() and t.strip().lower() not in LOWER_CLOTHING_TAGS
+                and not any(w in t.strip().lower() for w in ["denim", "shorts", "pants", "jeans", "skirt", "underwear", "panties", "bikini"])
+            ]
+            fallback_card["anima_nsfw_tags"] = ", ".join(cleaned_tokens)
+        neg = fallback_card.get("negative_tags", "")
+        neg_additions = ["panties", "underwear", "shorts", "denim", "denim shorts", "denim skirt", "skirt", "pants", "jeans", "bra", "bikini"]
+        neg_tokens = [t.strip() for t in neg.split(",") if t.strip()]
+        for na in neg_additions:
+            if na not in neg_tokens:
+                neg_tokens.append(na)
+        fallback_card["negative_tags"] = ", ".join(neg_tokens)
 
     safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", card_name.strip()) or "custom_char"
     if not safe_name.startswith("charcard_"):

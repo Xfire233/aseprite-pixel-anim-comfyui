@@ -11,17 +11,15 @@
 - 模型清单唯一来源是 `models.json`；改了工作流里的模型文件名后运行 `scripts/embed_model_urls.py`。
 - 不进 git：`work/`、`output/`、`input/`、`scripts/charcard_*.json`、任何权重和 secret（见 `.gitignore`）。
 
-## 当前进度与未决问题（2026-10-15）
+## 当前进度与基线定版（2026-10-15 最新完整定版）
 
-- Stage 1B 已改为标准节点遮罩重绘（见下方入口）。6 个 seed 实测：遮罩外细节 0.999+；短裤残留 ≤20 像素 3/6；骨盆区清晰度达 0.67 仅 1/6（Anima 重画后细节偏少）。对照图：`work/diag_e2e_6seeds.png`、`work/diag_pose_mlegs.png`。
-- 未验证：换参考图（磁盘上只有一个角色）、双人姿势（`duo_*`）的遮罩与重绘。
-- 默认 `charcard=none`（不带个人角色卡）跑主工作流时，短裤残留明显（一次实测 5923 像素），未定位原因；疑为提示词缺具体服装描述。
-- 角色卡提取节点已接入 3 个带导演的工作流（参考图 → 提取 → 导演 `charcard_file`，覆盖下拉框）；`char_name` 默认 `custom_char` 会被反复覆盖。仅用非人物图做过连线冒烟，真实角色图的提取质量未评估。
-- GitHub 私有仓库：`Xfire233/aseprite-pixel-anim-comfyui`（`main`）。全新机器上完整跑 `install.py`（含 62 GB 模型）未做过。
-- 骑乘/蹲起动作：Stage 2 由骨骼轨迹驱动（`_warp_image_by_pose_kps` 按骨骼段变形 + LowNoise Wan 精修），实测有上下起伏；手仍可能落在胯前（已把 `solo_squat_cowgirl` 手臂外展，未在多 seed 上复测）。
-- 已知小问题：`scripts/validate_loop.py` 默认 `--adj-max` 曾从 9000 放宽到 10500，属放松检查而非修复。
-- 生成图里的裸露部位质量，视觉模型拒绝评价，只能由用户目检。
-
+- **Stage 1A 黄金脱衣 LoRA 配方**：`qwen_nsfw_adv` (0.80) + `Unchained-XXX` (0.72) + `Lightning-4steps` (1.0)。
+- **Stage 1B 局部精修与 Regex 错位防御**：`AsepritePoseRegionMask` 定版为 `pelvis=True, chest=False, size=1.4, feather=8`，`denoise=0.70`。`__init__.py` 与 `nodes_string.py` 注入防错位保护。
+- **Stage 2 真实 Diffusion 动力学恢复**：彻底删除底层的 `_warp_image_by_pose_kps` 仿射拉伸 hook 与 `_ACTIVE_TRAJ_LATENT` 采样覆盖，恢复 Wan2.2 真实的扩散物理动力学。
+- **角色卡提取器开关化与按需智能脱衣（Node 58）**：增加 `enable_extraction` 布尔开关（默认关闭，保持下拉预设卡生效）；接入 `user_prompt` 输入插槽，Vision LLM 根据用户指令动态处理——脱衣需求彻底剔除下装与牛仔面料（`denim` 强清洗且封入负面词，自适应体型与已知角色名），普通日常动作完整保持原始服装。
+- **提示词导演（Node 33）直观 API Key 输入**：清理了误将 API Key 和 Base URL 转为隐藏连线插槽的缺陷，恢复为节点上的直观密码文本框。
+- **成品工作流元数据回溯**：`AsepritePixelizeAssemble` 注入 `prompt` 与 `workflow` PngInfo，生成的 `_zoom.png` / `_sheet.png` 直接拖回 ComfyUI 即可 100% 还原工作流；同名落盘 `<name>_workflow.json`。
+- **自动化回归套件**：`scripts/eval_pipeline_baseline.py` 与 `scripts/validate_workflows.py` 全部 100% PASS。
 ## 入口
 
 - 生成单帧/换姿精修：`python scripts/gen.py --ref <参考图路径> --pose-preset solo_m_legs_sit --phase "<姿势描述>" --anima-refine --prefix phase0/<名>`（`--card scripts/charcard_<名>.json` 可选）

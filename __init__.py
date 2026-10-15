@@ -54,145 +54,6 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专精于 Anima (Danbooru Tag 图像模�
 
 _PROMPT_CACHE = {}
 
-_ACTIVE_POSE_ID = "solo_m_legs_sit"
-_ACTIVE_USER_PROMPT = ""
-
-
-_BONE_SEGMENTS = [
-    ("nose", "neck"), ("r_eye", "l_eye"), ("r_ear", "l_ear"),
-    ("neck", "r_sho"), ("neck", "l_sho"),
-    ("r_sho", "r_hip"), ("l_sho", "l_hip"), ("r_hip", "l_hip"),
-    ("r_sho", "r_elb"), ("r_elb", "r_wri"),
-    ("l_sho", "l_elb"), ("l_elb", "l_wri"),
-    ("r_hip", "r_kne"), ("r_kne", "r_ank"),
-    ("l_hip", "l_kne"), ("l_kne", "l_ank"),
-]
-
-
-def _warp_image_by_pose_kps(img_rgb: np.ndarray, start_kps_in, peak_kps_in, t: float = 1.0, motion_scale: float = 1.15) -> np.ndarray:
-    """Articulated Bone-Segment Skeletal Skinning for 1..N characters (solo_* and duo_*).
-
-    Locks head, hair, face, and upper torso as a 100% rigid body (zero vertical squishing!) while
-    articulating thigh, shin, and arm bone segments (e.g. knees swinging wide outward on squat/riding).
-    """
-    H, W = img_rgb.shape[:2]
-    fg = img_rgb.min(axis=2) < 242
-    ys, xs = np.where(fg)
-    if len(ys) < 100 or not start_kps_in or not peak_kps_in or abs(t) < 1e-4:
-        return img_rgb.copy()
-
-    start_list = start_kps_in if isinstance(start_kps_in, list) else [start_kps_in]
-    peak_list = peak_kps_in if isinstance(peak_kps_in, list) else [peak_kps_in]
-    x0, x1 = float(xs.min()), float(xs.max())
-    y0, y1 = float(ys.min()), float(ys.max())
-    bw, bh = max(1.0, x1 - x0), max(1.0, y1 - y0)
-
-    all_sx, all_sy = [], []
-    for sk in start_list:
-        if isinstance(sk, dict):
-            for pt in sk.values():
-                all_sx.append(float(pt[0]))
-                all_sy.append(float(pt[1]))
-    if not all_sx:
-        return img_rgb.copy()
-    sxmin, sxmax = min(all_sx), max(all_sx)
-    symin, symax = min(all_sy), max(all_sy)
-    sx_span = max(0.05, sxmax - sxmin)
-    sy_span = max(0.05, symax - symin)
-
-    def map_pt(pt):
-        cx = x0 + (0.10 + 0.80 * ((float(pt[0]) - sxmin) / sx_span)) * bw
-        cy = y0 + (0.13 + 0.80 * ((float(pt[1]) - symin) / sy_span)) * bh
-        return np.array([cx, cy], dtype=np.float32)
-
-    seg_A, seg_B, disp_A, disp_B = [], [], [], []
-    for sk, pk in zip(start_list, peak_list):
-        if not isinstance(sk, dict) or not isinstance(pk, dict):
-            continue
-        sk_ext = dict(sk)
-        pk_ext = dict(pk)
-        # Virtual rigid head-crown segments above nose/ears so crown & hair never squish vertically
-        if "nose" in sk and "nose" in pk:
-            ndx = float(pk["nose"][0]) - float(sk["nose"][0])
-            ndy = float(pk["nose"][1]) - float(sk["nose"][1])
-            for ck, ox, oy in [("crown_c", 0.0, -0.11), ("crown_l", 0.10, -0.09), ("crown_r", -0.10, -0.09)]:
-                sk_ext[ck] = (float(sk["nose"][0]) + ox, float(sk["nose"][1]) + oy)
-                pk_ext[ck] = (float(sk["nose"][0]) + ox + ndx, float(sk["nose"][1]) + oy + ndy)
-        # Virtual foot-sole segments below ankles so shoes stay anchored with ankles
-        for ank_k, foot_k in [("r_ank", "r_foot"), ("l_ank", "l_foot")]:
-            if ank_k in sk and ank_k in pk:
-                adx = float(pk[ank_k][0]) - float(sk[ank_k][0])
-                ady = float(pk[ank_k][1]) - float(sk[ank_k][1])
-                sk_ext[foot_k] = (float(sk[ank_k][0]), float(sk[ank_k][1]) + 0.06)
-                pk_ext[foot_k] = (float(sk[ank_k][0]) + adx, float(sk[ank_k][1]) + 0.06 + ady)
-
-        extra_segs = [("nose", "crown_c"), ("crown_r", "crown_l"), ("r_ear", "crown_r"), ("l_ear", "crown_l"), ("r_ank", "r_foot"), ("l_ank", "l_foot")]
-        for k1, k2 in _BONE_SEGMENTS + extra_segs:
-            if k1 in sk_ext and k2 in sk_ext and k1 in pk_ext and k2 in pk_ext:
-                pA = map_pt(sk_ext[k1])
-                pB = map_pt(sk_ext[k2])
-                dA = np.array([(float(pk_ext[k1][0]) - float(sk_ext[k1][0])) * W * motion_scale * t,
-                               (float(pk_ext[k1][1]) - float(sk_ext[k1][1])) * H * motion_scale * t], dtype=np.float32)
-                dB = np.array([(float(pk_ext[k2][0]) - float(sk_ext[k2][0])) * W * motion_scale * t,
-                               (float(pk_ext[k2][1]) - float(sk_ext[k2][1])) * H * motion_scale * t], dtype=np.float32)
-                seg_A.append(pA + dA)
-                seg_B.append(pB + dB)
-                disp_A.append(dA)
-                disp_B.append(dB)
-
-    if not seg_A:
-        return img_rgb.copy()
-
-    seg_A = np.stack(seg_A, axis=0)
-    seg_B = np.stack(seg_B, axis=0)
-    disp_A = np.stack(disp_A, axis=0)
-    disp_B = np.stack(disp_B, axis=0)
-
-    gh, gw = 96, 64
-    gy, gx = np.meshgrid(np.linspace(0, H - 1, gh, dtype=np.float32), np.linspace(0, W - 1, gw, dtype=np.float32), indexing="ij")
-    P = np.stack([gx, gy], axis=-1)[:, :, None, :]
-    A = seg_A[None, None, :, :]
-    B = seg_B[None, None, :, :]
-    AB = B - A
-    AB_len2 = np.sum(AB * AB, axis=-1) + 1e-4
-    u = np.clip(np.sum((P - A) * AB, axis=-1) / AB_len2, 0.0, 1.0)
-    Q = A + u[:, :, :, None] * AB
-    dist2 = np.sum((P - Q) ** 2, axis=-1)
-
-    eps2 = (max(bw, bh) * 0.045) ** 2
-    weights = 1.0 / ((dist2 + eps2) ** 2)
-    weights /= np.sum(weights, axis=-1, keepdims=True)
-
-    seg_disp = (1.0 - u[:, :, :, None]) * disp_A[None, None, :, :] + u[:, :, :, None] * disp_B[None, None, :, :]
-    field_coarse = np.sum(weights[:, :, :, None] * seg_disp, axis=2)
-
-    dx_full = np.array(Image.fromarray(field_coarse[:, :, 0], mode="F").resize((W, H), Image.BILINEAR), dtype=np.float32)
-    dy_full = np.array(Image.fromarray(field_coarse[:, :, 1], mode="F").resize((W, H), Image.BILINEAR), dtype=np.float32)
-    # Smoothly damp horizontal displacement near the left/right canvas edges so wide twintails/knees never clip out of frame
-    edge_x = np.minimum(np.arange(W, dtype=np.float32), np.arange(W - 1, -1, -1, dtype=np.float32)) / max(1.0, 0.06 * W)
-    dx_full *= np.clip(edge_x, 0.0, 1.0)[None, :]
-
-    yy, xx = np.meshgrid(np.arange(H, dtype=np.float32), np.arange(W, dtype=np.float32), indexing="ij")
-    sx_map = np.clip(xx - dx_full, 0.0, W - 1.001)
-    sy_map = np.clip(yy - dy_full, 0.0, H - 1.001)
-    oob = (xx - dx_full < 0) | (xx - dx_full >= W - 1) | (yy - dy_full < 0) | (yy - dy_full >= H - 1)
-
-    x0_i = sx_map.astype(np.int32)
-    y0_i = sy_map.astype(np.int32)
-    x1_i = np.minimum(x0_i + 1, W - 1)
-    y1_i = np.minimum(y0_i + 1, H - 1)
-    wx = (sx_map - x0_i)[:, :, None]
-    wy = (sy_map - y0_i)[:, :, None]
-
-    im_f = img_rgb.astype(np.float32)
-    c00 = im_f[y0_i, x0_i]
-    c10 = im_f[y0_i, x1_i]
-    c01 = im_f[y1_i, x0_i]
-    c11 = im_f[y1_i, x1_i]
-    warped = (1.0 - wy) * ((1.0 - wx) * c00 + wx * c10) + wy * ((1.0 - wx) * c01 + wx * c11)
-    warped[oob] = 255.0
-    return warped.clip(0.0, 255.0).round().astype(np.uint8)
-
 def _load_pose_library() -> dict:
     if os.path.exists(POSE_LIB_INDEX):
         try:
@@ -260,33 +121,42 @@ def _get_cached_models():
             pass
     return models
 
+if hasattr(server, "PromptServer") and getattr(server.PromptServer, "instance", None) is not None:
+    @server.PromptServer.instance.routes.post("/aseprite_llm/fetch_models")
+    async def fetch_llm_models(request):
+        try:
+            body = await request.json()
+            base_url = (body.get("base_url") or "").strip().rstrip("/")
+            api_key = _resolve_api_key(body.get("api_key") or "")
+            if not base_url:
+                return web.json_response({"ok": False, "error": "base_url 为空"})
+            url = f"{base_url}/models"
+            headers = {"User-Agent": "ComfyUI-AsepritePromptDirector/1.0"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            req = urllib.request.Request(url, headers=headers)
+            raw = urllib.request.urlopen(req, timeout=15).read().decode("utf-8")
+            data = json.loads(raw)
+            items = data.get("data", []) if isinstance(data, dict) else []
+            models = [it.get("id") for it in items if isinstance(it, dict) and it.get("id")]
+            if not models:
+                return web.json_response({"ok": False, "error": f"接口未返回有效模型列表: {raw[:200]}"})
+            os.makedirs(os.path.dirname(MODELS_CACHE_FILE), exist_ok=True)
+            with open(MODELS_CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(models, f, indent=2, ensure_ascii=False)
+            return web.json_response({"ok": True, "models": models})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
 
-@server.PromptServer.instance.routes.post("/aseprite_llm/fetch_models")
-async def fetch_llm_models(request):
-    try:
-        body = await request.json()
-        base_url = (body.get("base_url") or "").strip().rstrip("/")
-        api_key = _resolve_api_key(body.get("api_key") or "")
-        if not base_url:
-            return web.json_response({"ok": False, "error": "base_url 为空"})
-        url = f"{base_url}/models"
-        headers = {"User-Agent": "ComfyUI-AsepritePromptDirector/1.0"}
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        req = urllib.request.Request(url, headers=headers)
-        raw = urllib.request.urlopen(req, timeout=15).read().decode("utf-8")
-        data = json.loads(raw)
-        items = data.get("data", []) if isinstance(data, dict) else []
-        models = [it.get("id") for it in items if isinstance(it, dict) and it.get("id")]
-        if not models:
-            return web.json_response({"ok": False, "error": f"接口未返回有效模型列表: {raw[:200]}"})
-        os.makedirs(os.path.dirname(MODELS_CACHE_FILE), exist_ok=True)
-        with open(MODELS_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(models, f, indent=2, ensure_ascii=False)
-        return web.json_response({"ok": True, "models": models})
-    except Exception as e:
-        return web.json_response({"ok": False, "error": str(e)})
-
+    @server.PromptServer.instance.routes.post("/aseprite_llm/save_key")
+    async def save_llm_key(request):
+        try:
+            body = await request.json()
+            raw_key = body.get("api_key") or ""
+            _resolve_api_key(raw_key)
+            return web.json_response({"ok": True})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
 
 _BIREFNET_MODEL = None
 _BIREFNET_TFM = None
@@ -375,7 +245,11 @@ class AsepritePixelizeAssemble:
                 "frame_duration_ms": ("INT", {"default": 180, "min": 20, "max": 2000, "step": 10}),
                 "gif_scale": ("INT", {"default": 4, "min": 1, "max": 10, "step": 1}),
                 "tag": ("STRING", {"default": "idle_loop"}),
-            }
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
         }
     @classmethod
     def VALIDATE_INPUTS(cls, **kwargs):
@@ -399,6 +273,8 @@ class AsepritePixelizeAssemble:
         frame_duration_ms=180,
         gif_scale=4,
         tag="idle_loop",
+        prompt=None,
+        extra_pnginfo=None,
         **kwargs,
     ):
         # Self-heal if an un-refreshed browser tab sent shifted widget values from the old 13-widget schema
@@ -468,8 +344,7 @@ class AsepritePixelizeAssemble:
         sheet_path = os.path.join(out_dir, f"{safe_name}_sheet.png")
         zoom_path = os.path.join(PROJECT_ROOT, "work", f"{safe_name}_zoom.png")
 
-        # Calculate number of output frames for durations string (start->peak trajectory always ping-pongs to complete cycle)
-        use_pingpong = bool(pingpong) or (_ACTIVE_TRAJ_LATENT is not None)
+        use_pingpong = bool(pingpong)
         k = subsample if (0 < subsample < len(raw_paths)) else len(raw_paths)
         n_out = (2 * k - 2) if (use_pingpong and k >= 3) else k
         durations_str = ",".join([str(int(frame_duration_ms))] * max(1, n_out))
@@ -511,14 +386,50 @@ class AsepritePixelizeAssemble:
         # 4. GIF / sheet already live in ComfyUI output/aseprite; copy the zoom sheet there for inline Web UI preview
         comfy_out = out_dir
         ui_images = []
+
+        from PIL.PngImagePlugin import PngInfo
+
+        metadata = None
+        if prompt is not None or extra_pnginfo is not None:
+            metadata = PngInfo()
+            if prompt is not None:
+                metadata.add_text("prompt", json.dumps(prompt))
+            if extra_pnginfo is not None:
+                for x in extra_pnginfo:
+                    metadata.add_text(x, json.dumps(extra_pnginfo[x]))
+
+        # Save standalone workflow JSON alongside for 100% fail-safe parameter recovery
+        if extra_pnginfo and "workflow" in extra_pnginfo:
+            try:
+                wf_path = os.path.join(out_dir, f"{safe_name}_workflow.json")
+                with open(wf_path, "w", encoding="utf-8") as f:
+                    json.dump(extra_pnginfo["workflow"], f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"[AsepritePixelizeAssemble] workflow.json save warning: {e}")
+        if prompt is not None:
+            try:
+                p_path = os.path.join(out_dir, f"{safe_name}_prompt.json")
+                with open(p_path, "w", encoding="utf-8") as f:
+                    json.dump(prompt, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                print(f"[AsepritePixelizeAssemble] prompt.json save warning: {e}")
+
         for src, suffix in [(gif_path, ".gif"), (zoom_path, "_zoom.png"), (sheet_path, "_sheet.png")]:
             if os.path.exists(src):
                 fname = f"{safe_name}{suffix}"
                 dst = os.path.join(comfy_out, fname)
-                if os.path.abspath(src) != os.path.abspath(dst):
-                    shutil.copyfile(src, dst)
+                if suffix.endswith(".png") and metadata is not None:
+                    try:
+                        im = Image.open(src)
+                        im.save(dst, pnginfo=metadata)
+                    except Exception as e:
+                        print(f"[AsepritePixelizeAssemble] metadata save error on {fname}: {e}")
+                        if os.path.abspath(src) != os.path.abspath(dst):
+                            shutil.copyfile(src, dst)
+                else:
+                    if os.path.abspath(src) != os.path.abspath(dst):
+                        shutil.copyfile(src, dst)
                 ui_images.append({"filename": fname, "subfolder": "aseprite", "type": "output"})
-
         # 5. Build output IMAGE tensors (upscaled pixel frames on dark gray + zoom sheet)
         upscaled_tensors = []
         for p in pix_frame_paths:
@@ -1126,8 +1037,8 @@ class AsepriteLLMPromptDirector:
         prompt=None,
         **kwargs,
     ):
-        # A connected AsepriteCharcardExtractor overrides the dropdown with the card it just wrote.
-        if isinstance(charcard_file, str) and charcard_file.strip():
+        # A connected AsepriteCharcardExtractor only overrides if dropdown is set to 'none' or empty
+        if (not charcard or charcard.startswith("none")) and isinstance(charcard_file, str) and charcard_file.strip():
             charcard = charcard_file.strip()
         # 1. Self-heal if an un-refreshed browser tab sent shifted widgets (system_prompt -> pose_preset -> prompt_mode)
         if isinstance(system_prompt, str) and any(system_prompt.startswith(p) for p in ("solo_", "duo_", "none")):
@@ -1146,9 +1057,6 @@ class AsepriteLLMPromptDirector:
                     elif not n_in.get("enable_pose_control", True):
                         pose_preset = "none (不使用预设骨骼)"
                     break
-        global _ACTIVE_POSE_ID, _ACTIVE_USER_PROMPT
-        _ACTIVE_POSE_ID = (pose_preset or "none").split(" ")[0].strip()
-        _ACTIVE_USER_PROMPT = str(user_prompt or "")
 
         mode_key = (prompt_mode or "auto_compile").split(" ")[0].strip()
         has_manual = any(s and s.strip() for s in (stage1_positive, stage1_negative, stage2_positive, stage2_negative))
@@ -1192,39 +1100,39 @@ class AsepriteLLMPromptDirector:
         )
         return {"ui": {"compiled_prompts": list(res)}, "result": res}
 
-
-@server.PromptServer.instance.routes.post("/aseprite_llm/compile_preview")
-async def compile_llm_preview(request):
-    director = AsepriteLLMPromptDirector()
-    try:
-        body = await request.json()
-        mode = body.get("mode", "llm")
-        charcard = body.get("charcard") or _CHARCARD_NONE
-        pose_preset = body.get("pose_preset") or "none (不使用预设骨骼)"
-        if mode == "template":
-            res = director.build_local_template(charcard, pose_preset, user_prompt=body.get("user_prompt") or "")
-            return web.json_response({"ok": True, "prompts": list(res), "source": "template"})
-        res = director._compile_core(
-            base_url=body.get("base_url") or DEFAULT_LLM_BASE_URL,
-            api_key=body.get("api_key") or "",
-            model=body.get("model") or "",
-            charcard=charcard,
-            user_prompt=body.get("user_prompt") or "",
-            system_prompt=body.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
-            reference_image=None,
-            pose_preset=pose_preset,
-        )
-        return web.json_response({"ok": True, "prompts": list(res), "source": "llm"})
-    except Exception as e:
+if hasattr(server, "PromptServer") and getattr(server.PromptServer, "instance", None) is not None:
+    @server.PromptServer.instance.routes.post("/aseprite_llm/compile_preview")
+    async def compile_llm_preview(request):
+        director = AsepriteLLMPromptDirector()
         try:
-            tpl = director.build_local_template(
-                body.get("charcard") or _CHARCARD_NONE,
-                body.get("pose_preset") or "none",
+            body = await request.json()
+            mode = body.get("mode", "llm")
+            charcard = body.get("charcard") or _CHARCARD_NONE
+            pose_preset = body.get("pose_preset") or "none (不使用预设骨骼)"
+            if mode == "template":
+                res = director.build_local_template(charcard, pose_preset, user_prompt=body.get("user_prompt") or "")
+                return web.json_response({"ok": True, "prompts": list(res), "source": "template"})
+            res = director._compile_core(
+                base_url=body.get("base_url") or DEFAULT_LLM_BASE_URL,
+                api_key=body.get("api_key") or "",
+                model=body.get("model") or "",
+                charcard=charcard,
                 user_prompt=body.get("user_prompt") or "",
+                system_prompt=body.get("system_prompt") or DEFAULT_SYSTEM_PROMPT,
+                reference_image=None,
+                pose_preset=pose_preset,
             )
-        except Exception:
-            tpl = ("", "", "", "")
-        return web.json_response({"ok": False, "error": str(e), "prompts": list(tpl)})
+            return web.json_response({"ok": True, "prompts": list(res), "source": "llm"})
+        except Exception as e:
+            try:
+                tpl = director.build_local_template(
+                    body.get("charcard") or _CHARCARD_NONE,
+                    body.get("pose_preset") or "none",
+                    user_prompt=body.get("user_prompt") or "",
+                )
+            except Exception:
+                tpl = ("", "", "", "")
+            return web.json_response({"ok": False, "error": str(e), "prompts": list(tpl)})
 
 def _purge_vram_and_vbars(*extra_patchers):
     """Unloads all models and purges comfy-aimdo ModelVBARs without aborting the active malloc_graph."""
@@ -1264,19 +1172,12 @@ def _purge_vram_and_vbars(*extra_patchers):
 _ORIG_COMFY_SAMPLE = getattr(comfy.sample, "_aseprite_orig_sample", comfy.sample.sample)
 comfy.sample._aseprite_orig_sample = _ORIG_COMFY_SAMPLE
 
-
-_ACTIVE_TRAJ_LATENT = None
-
-
 def _aseprite_guarded_sample(model, *args, **kwargs):
-    """Prevents 16GB VRAM WDDM thrashing across QwenImage, Anima, WAN21 (HighNoise + LowNoise), and WanVAE,
-    and guides WAN21 along the 9-frame OpenPose trajectory without FLF mask haze.
-    """
-    global _ACTIVE_TRAJ_LATENT
+    """Prevents 16GB VRAM WDDM thrashing across QwenImage, Anima, WAN21, and WanVAE."""
     cur_cls = ""
     try:
         cur_cls = model.model.__class__.__name__ if hasattr(model, "model") else ""
-        if cur_cls in ("Anima", "QwenImage", "WAN21"):
+        if any(k in cur_cls for k in ("Anima", "QwenImage", "WAN21", "Wan")):
             other_loaded = [
                 lm.model
                 for lm in getattr(comfy.model_management, "current_loaded_models", [])
@@ -1289,81 +1190,17 @@ def _aseprite_guarded_sample(model, *args, **kwargs):
     except Exception as e:
         print(f"[VRAM Guard] pre-sample warning: {e}")
 
-    # When _ACTIVE_TRAJ_LATENT is present (9-frame OpenPose trajectory encoded by WanVAE):
-    # - HighNoise WAN21 (force_full_denoise=False): return _ACTIVE_TRAJ_LATENT directly (saves 13.86GB VRAM swap + 15s!)
-    # - LowNoise WAN21 (force_full_denoise=True): initialize directly from _ACTIVE_TRAJ_LATENT at sigma=0.36 -> 0.18 -> 0.0
-    #   using proper Flow Matching noise_scaling across all frames, with zero post-sample averaging (zero ghosting/double-exposure!)
-    if cur_cls == "WAN21" and _ACTIVE_TRAJ_LATENT is not None and len(args) >= 8:
-        lat_in = args[7]
-        if isinstance(lat_in, torch.Tensor) and lat_in.shape == _ACTIVE_TRAJ_LATENT.shape and lat_in.shape[2] >= 2:
-            if not kwargs.get("force_full_denoise", False):
-                print("[WanImageToVideo Pose Driver] Using 9-frame OpenPose trajectory latent for coarse stage (bypassing HighNoise WAN21).")
-                return _ACTIVE_TRAJ_LATENT.to(device=lat_in.device, dtype=lat_in.dtype).clone()
-            else:
-                try:
-                    zt = _ACTIVE_TRAJ_LATENT.to(device=lat_in.device, dtype=lat_in.dtype).clone()
-                    seed_val = kwargs.get("seed") or 777001
-                    fresh_noise = comfy.sample.prepare_noise(zt, int(seed_val))
-                    args = list(args)
-                    args[0] = fresh_noise
-                    args[7] = zt
-                    args = tuple(args)
-                    kwargs["sigmas"] = torch.FloatTensor([0.36, 0.18, 0.0])
-                    kwargs["start_step"] = None
-                    kwargs["last_step"] = None
-                    print("[WanImageToVideo Pose Driver] Refining 9-frame OpenPose trajectory with LowNoise WAN21 (sigmas=[0.36, 0.18, 0.0]).")
-                except Exception as e:
-                    print(f"[WanImageToVideo Pose Driver] LowNoise init warning: {e}")
-
     res = _ORIG_COMFY_SAMPLE(model, *args, **kwargs)
-    # Immediately after final WAN21 step (LowNoise step 2..4), free 13.86GB WAN21 vbars so VAEDecodeTiled never stalls!
     try:
-        if cur_cls == "WAN21" and kwargs.get("force_full_denoise", False):
+        if any(k in cur_cls for k in ("WAN21", "Wan")):
             _purge_vram_and_vbars(model)
-            print("[VRAM Guard] Freed WAN21 LowNoise vbars immediately before VAEDecodeTiled.")
+            print(f"[VRAM Guard] Freed {cur_cls} vbars immediately before VAEDecodeTiled.")
     except Exception as e:
         print(f"[VRAM Guard] post-sample warning: {e}")
     return res
 
 
 comfy.sample.sample = _aseprite_guarded_sample
-
-# Hook comfy.sd.VAE.encode to detect WanImageToVideo's [start_image, 0.5, 0.5, ...] batch and encode the 9-frame OpenPose trajectory!
-try:
-    _ORIG_VAE_ENCODE = getattr(comfy.sd.VAE, "_aseprite_orig_encode", comfy.sd.VAE.encode)
-    comfy.sd.VAE._aseprite_orig_encode = _ORIG_VAE_ENCODE
-
-    def _aseprite_vae_encode(self, pixels):
-        global _ACTIVE_TRAJ_LATENT
-        try:
-            if isinstance(pixels, torch.Tensor) and pixels.ndim == 4 and pixels.shape[0] >= 5:
-                if float((pixels[1:] - 0.5).abs().max().item()) < 1e-4:
-                    _ACTIVE_TRAJ_LATENT = None
-                    pose_id = _ACTIVE_POSE_ID
-                    lib = _load_pose_library()
-                    meta = lib.get(pose_id, {}) if (pose_id and pose_id != "none") else {}
-                    start_kps_list = meta.get("start_kps") or []
-                    peak_kps_list = meta.get("peak_kps") or []
-                    if start_kps_list and peak_kps_list:
-                        length = int(pixels.shape[0])
-                        s_np = (pixels[0, :, :, :3].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
-                        up = _ACTIVE_USER_PROMPT
-                        m_scale = 1.15 if any(k in up for k in ("起伏", "骑乘", "抽插", "弹跳", "摇晃")) or any(k in pose_id for k in ("squat", "cowgirl", "doggy", "mating", "arch")) else 0.75
-                        frames_np = []
-                        for i in range(length):
-                            t_val = 0.5 * (1.0 - math.cos(math.pi * i / max(1, length - 1)))
-                            w_np = _warp_image_by_pose_kps(s_np, start_kps_list, peak_kps_list, t=t_val, motion_scale=m_scale)
-                            frames_np.append(torch.from_numpy(w_np.astype(np.float32) / 255.0))
-                        traj_pixels = torch.stack(frames_np, dim=0).to(device=pixels.device, dtype=pixels.dtype)
-                        _ACTIVE_TRAJ_LATENT = _ORIG_VAE_ENCODE(self, traj_pixels).detach().cpu()
-                        print(f"[WanImageToVideo Pose Driver] Encoded {length}-frame OpenPose trajectory ({pose_id}, scale={m_scale}) for Wan2.2 motion guidance.")
-        except Exception as e:
-            print(f"[WanImageToVideo Pose Driver] vae encode hook warning: {e}")
-        return _ORIG_VAE_ENCODE(self, pixels)
-
-    comfy.sd.VAE.encode = _aseprite_vae_encode
-except Exception as e:
-    print(f"[WanImageToVideo Pose Driver] hook warning: {e}")
 class QwenEditFastConditioning:
     """Fast I2I conditioning node for Qwen-Image-Edit-2511 on 16GB VRAM.
 
@@ -1505,6 +1342,8 @@ class AsepriteCharcardExtractor:
         return {
             "required": {
                 "reference_image": ("IMAGE",),
+                "enable_extraction": ("BOOLEAN", {"default": False, "tooltip": "开启后从参考图自动提取新角色卡；关闭时直通，让提示词导演使用其下拉菜单选中的角色卡"}),
+                "user_prompt": ("STRING", {"multiline": True, "default": "", "tooltip": "输入用户的动作/姿势/脱衣指令，让 LLM 根据你的具体意图精准提取角色卡与设定服装状态"}),
                 "char_name": ("STRING", {"default": "custom_char"}),
                 "use_llm": ("BOOLEAN", {"default": True}),
                 "base_url": ("STRING", {"default": DEFAULT_LLM_BASE_URL}),
@@ -1518,9 +1357,11 @@ class AsepriteCharcardExtractor:
     FUNCTION = "extract"
     CATEGORY = "pixel_art/aseprite"
 
-    def extract(self, reference_image, char_name="custom_char", use_llm=True, base_url="", api_key="", model=""):
+    def extract(self, reference_image, enable_extraction=False, user_prompt="", char_name="custom_char", use_llm=True, base_url="", api_key="", model=""):
+        if not enable_extraction:
+            return ("", "", "", "", "")
         from scripts.extract_charcard import extract_charcard
-        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", (char_name or "custom_char").strip()).strip("_") or "custom_char"
+        safe_name = re.sub(r"[^a-zA-Z0-9_\-]", "_", (char_name or "custom_char").strip()).strip("_") or "custom_char"
         arr = (reference_image[0].detach().cpu().numpy().clip(0.0, 1.0) * 255.0).round().astype(np.uint8)
         card_data, out_fname = extract_charcard(
             Image.fromarray(arr[:, :, :3], "RGB"),
@@ -1529,6 +1370,7 @@ class AsepriteCharcardExtractor:
             base_url=base_url,
             api_key=_resolve_api_key(api_key),
             model=model,
+            user_prompt=user_prompt,
             save_to_disk=True,
         )
         return (
@@ -1601,7 +1443,7 @@ class AsepritePoseRegionMask:
                 "chest": ("BOOLEAN", {"default": False}),
                 "size": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05,
                                    "tooltip": "Scales every region ellipse"}),
-                "feather": ("INT", {"default": 8, "min": 0, "max": 64}),
+                "feather": ("INT", {"default": 12, "min": 0, "max": 64}),
             },
         }
 
@@ -1648,6 +1490,25 @@ class AsepritePoseRegionMask:
         if feather > 0:
             mask = mask.filter(ImageFilter.GaussianBlur(radius=feather))
         return (torch.from_numpy(np.array(mask).astype(np.float32) / 255.0).unsqueeze(0),)
+try:
+    import comfy_extras.nodes_string as _cns
+    if hasattr(_cns, "RegexReplace"):
+        _orig_regex_replace_exec = _cns.RegexReplace.execute
+
+        @classmethod
+        def _safe_regex_replace_exec(cls, string, regex_pattern, replace, case_insensitive=True, multiline=False, dotall=False, count=0):
+            pat = str(regex_pattern or "").strip()
+            rep = str(replace or "")
+            if not pat or rep.lower() == "true":
+                if "masterpiece" in str(string):
+                    m = re.search(r"masterpiece[\s\S]*", str(string))
+                    return _cns.io.NodeOutput(m.group(0) if m else str(string))
+                return _cns.io.NodeOutput(str(string))
+            return _orig_regex_replace_exec(string, regex_pattern, replace, case_insensitive=case_insensitive, multiline=multiline, dotall=dotall, count=count)
+
+        _cns.RegexReplace.execute = _safe_regex_replace_exec
+except Exception as _e:
+    pass
 
 
 WEB_DIRECTORY = "./web"

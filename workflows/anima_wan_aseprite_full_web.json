@@ -2275,122 +2275,9 @@
       "mode": 0,
       "inputs": [
         {
-          "label": "reference_image",
-          "localized_name": "reference_image",
           "name": "reference_image",
-          "shape": 7,
           "type": "IMAGE",
           "link": 49
-        },
-        {
-          "label": "base_url",
-          "localized_name": "base_url",
-          "name": "base_url",
-          "type": "STRING",
-          "widget": {
-            "name": "base_url"
-          },
-          "link": null
-        },
-        {
-          "label": "api_key",
-          "localized_name": "api_key",
-          "name": "api_key",
-          "type": "STRING",
-          "widget": {
-            "name": "api_key"
-          },
-          "link": null
-        },
-        {
-          "label": "model",
-          "localized_name": "model",
-          "name": "model",
-          "type": "COMBO",
-          "widget": {
-            "name": "model"
-          },
-          "link": null
-        },
-        {
-          "label": "charcard",
-          "localized_name": "charcard",
-          "name": "charcard",
-          "type": "COMBO",
-          "widget": {
-            "name": "charcard"
-          },
-          "link": null
-        },
-        {
-          "label": "user_prompt",
-          "localized_name": "user_prompt",
-          "name": "user_prompt",
-          "type": "STRING",
-          "widget": {
-            "name": "user_prompt"
-          },
-          "link": null
-        },
-        {
-          "label": "pose_preset",
-          "localized_name": "pose_preset",
-          "name": "pose_preset",
-          "type": "COMBO",
-          "widget": {
-            "name": "pose_preset"
-          },
-          "link": null
-        },
-        {
-          "label": "prompt_mode",
-          "localized_name": "prompt_mode",
-          "name": "prompt_mode",
-          "type": "COMBO",
-          "widget": {
-            "name": "prompt_mode"
-          },
-          "link": null
-        },
-        {
-          "label": "stage1_positive",
-          "localized_name": "stage1_positive",
-          "name": "stage1_positive",
-          "type": "STRING",
-          "widget": {
-            "name": "stage1_positive"
-          },
-          "link": null
-        },
-        {
-          "label": "stage1_negative",
-          "localized_name": "stage1_negative",
-          "name": "stage1_negative",
-          "type": "STRING",
-          "widget": {
-            "name": "stage1_negative"
-          },
-          "link": null
-        },
-        {
-          "label": "stage2_positive",
-          "localized_name": "stage2_positive",
-          "name": "stage2_positive",
-          "type": "STRING",
-          "widget": {
-            "name": "stage2_positive"
-          },
-          "link": null
-        },
-        {
-          "label": "stage2_negative",
-          "localized_name": "stage2_negative",
-          "name": "stage2_negative",
-          "type": "STRING",
-          "widget": {
-            "name": "stage2_negative"
-          },
-          "link": null
         },
         {
           "name": "charcard_file",
@@ -2445,7 +2332,7 @@
         "",
         "",
         "(先填 base_url 再点获取模型)",
-        "none (不使用预设角色卡，自动识别参考图1外观)",
+        "charcard_hiro.json (篠泽广-学园偶大NSFW版)",
         "参考图1的角色，换成M字开腿坐在地上的姿势，下身不穿裤子完全裸露，双手扶在大腿上，害羞脸红；动作：缓慢呼吸，胸口与肩膀轻微起伏",
         "solo_m_legs_sit (单人·M字开腿坐地抚腿娇喘)",
         "auto_compile (LLM编译并自动回填下方文本框)",
@@ -3598,6 +3485,7 @@
         "Node name for S&R": "RegexReplace"
       },
       "widgets_values": [
+        "",
         "^[\\s\\S]*?(?=masterpiece)",
         "",
         true,
@@ -3713,6 +3601,8 @@
         "Node name for S&R": "AsepriteCharcardExtractor"
       },
       "widgets_values": [
+        false,
+        "",
         "custom_char",
         true,
         "",
@@ -4287,7 +4177,7 @@
       58,
       0,
       33,
-      12,
+      1,
       "STRING"
     ]
   ],
