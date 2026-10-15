@@ -199,12 +199,16 @@ def desensitize_pose_prompt(raw_prompt: str) -> str:
     text = re.sub(r"双手\s*(揉胸|摸胸|托胸|抓胸|抚摸胸部)", "both hands placed on chest, ", text)
     text = re.sub(r"双手\s*(伸入下体|摸下体|放在裆部|自慰)", "both hands placed near pelvis, ", text)
 
+    # Oral sex actions
+    text = re.sub(r"(握住肉棒|含入口中|含入嘴中|含入|含住|口交|口活|吞吐|吹箫)", "both hands held in front of mouth along central axis, head tilted up, ", text)
+    text = re.sub(r"(肉棒|阴茎|鸡巴|龟头|生殖器|阳具)", "", text)
+
     # General pose & action replacements
     replacements = [
         (r"M字开腿|M字腿|大开腿|分腿|双腿大开|张开双腿|大腿张开", "sitting on floor with legs spread wide in M-shape, knees bent pointing outward, "),
         (r"(后入|狗爬|四肢着地|撅屁股|翘臀)", "kneeling on all fours, hips elevated, back slightly arched, "),
         (r"(骑乘|跨坐|压在身上)", "straddling position, knees bent and spread wide, "),
-        (r"(双膝跪地|跪趴|跪地)", "kneeling on the floor with knees bent, "),
+        (r"(双膝跪地|跪趴|跪地|双膝跪在地上|跪在地上)", "kneeling on the floor with knees bent, "),
         (r"(仰卧|平躺|躺在地上)", "lying on the back, legs apart, "),
         (r"(揉|摸|抓|抚摸|托起)\s*(胸|胸部|乳房|奶子|双峰)", "hand on chest, "),
         (r"(伸入|摸|抠|扣|按在|抚摸|探入)\s*(下体|私处|裆部|阴部|小穴|私密部位)", "hand at pelvis, "),

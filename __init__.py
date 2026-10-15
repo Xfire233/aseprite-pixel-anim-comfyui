@@ -567,6 +567,8 @@ class AsepriteLLMPoseGenerator:
             start_kps = enforce_anatomical_constraints(start_kps)
             peak_kps = enforce_anatomical_constraints(peak_kps)
 
+        seq_kps = interpolate_pose_sequence(start_kps, peak_kps, num_frames=max(1, int(num_frames)), mode=motion_mode)
+
         tensors = []
         for frame_kps in seq_kps:
             pil_im = render_openpose_skeleton(frame_kps, width=int(width), height=int(height), bg_color=bg_color)
