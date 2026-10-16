@@ -160,10 +160,144 @@ function maskApiKeyWidget(node) {
     };
 }
 
+function addAsepriteRerollButtons(targetNode) {
+    if (targetNode._asepriteRerollButtonsAdded) return;
+    targetNode._asepriteRerollButtonsAdded = true;
+
+    const lockStageSeeds = (nodeIdsToLock) => {
+        app.graph?._nodes?.forEach((n) => {
+            if (nodeIdsToLock.includes(Number(n.id))) {
+                n.widgets?.forEach((w) => {
+                    if (w.name === "control_after_generate") {
+                        w.value = "fixed";
+                        if (typeof w.callback === "function") w.callback("fixed");
+                    }
+                });
+            }
+        });
+    };
+
+    targetNode.addWidget("button", "🎲 整体全部重摇 (全部阶段换新)", null, () => {
+        app.graph?._nodes?.forEach((n) => {
+            if (!n.widgets) return;
+            if (n.type?.includes("KSampler") || n.title?.includes("采样") || n.title?.includes("阶段 1")) {
+                const seedW = n.widgets.find((w) => w.name === "seed") || n.widgets[0];
+                if (seedW && typeof seedW.value === "number") {
+                    seedW.value = Math.floor(Math.random() * 1e14);
+                    if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                }
+            }
+            if (n.type === "KSamplerAdvanced" || n.title?.includes("阶段 2")) {
+                const seedW = n.widgets.find((w) => w.name === "noise_seed" || w.name === "seed");
+                if (seedW && typeof seedW.value === "number") {
+                    seedW.value = Math.floor(Math.random() * 1e14);
+                    if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                }
+            }
+            if (n.type === "AsepriteLLMPoseGenerator") {
+                const seedW = n.widgets.find((w) => w.name === "seed");
+                if (seedW && typeof seedW.value === "number") {
+                    seedW.value = Math.floor(Math.random() * 1e14);
+                    if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                }
+            }
+        });
+        app.graph.setDirtyCanvas(true, true);
+        app.queuePrompt(0);
+    }).serialize = false;
+
+    targetNode.addWidget("button", "🎲 仅重摇 Stage 1 (锁死 Stage 2 视频，只重新抽立绘)", null, () => {
+        lockStageSeeds([23, 24]);
+        const s1Nodes = app.graph?._nodes?.filter((n) => n.id == 7 || n.id == 53 || n.type === "KSampler" || n.title?.includes("阶段 1"));
+        if (s1Nodes && s1Nodes.length > 0) {
+            s1Nodes.forEach((n) => {
+                const seedW = n.widgets?.find((w) => w.name === "seed") || n.widgets?.[0];
+                if (seedW && typeof seedW.value === "number") {
+                    seedW.value = Math.floor(Math.random() * 1e14);
+                    if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                }
+            });
+            app.graph.setDirtyCanvas(true, true);
+            app.queuePrompt(0);
+        } else {
+            alert("未找到 Stage 1 KSampler 节点！");
+        }
+    }).serialize = false;
+
+    targetNode.addWidget("button", "🎲 仅重摇 Stage 1B (锁死 1A 构图，只重摇脱衣重绘)", null, () => {
+        const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.type === "KSampler" && n.title?.includes("1B")));
+        if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
+            lockStageSeeds([7, 23, 24]);
+            const seedW = node1B.widgets.find((w) => w.name === "seed") || node1B.widgets[0];
+            if (seedW && typeof seedW.value === "number") {
+                seedW.value = Math.floor(Math.random() * 1e14);
+                if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+            }
+            app.graph.setDirtyCanvas(true, true);
+            app.queuePrompt(0);
+        } else {
+            alert("当前工作流为纯 Anima 直出工作流（无 Stage 1B 局部脱衣节点），请点击「仅重摇 Stage 1」或「整体全部重摇」！");
+        }
+    }).serialize = false;
+
+    targetNode.addWidget("button", "🎲 仅重摇 Stage 2 (锁死 Stage 1 立绘，只重摇动作视频)", null, () => {
+        lockStageSeeds([7, 53]);
+        const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
+        if (node2 && Array.isArray(node2.widgets)) {
+            const seedW = node2.widgets.find((w) => w.name === "noise_seed" || w.name === "seed") || node2.widgets[1];
+            if (seedW && typeof seedW.value === "number") {
+                seedW.value = Math.floor(Math.random() * 1e14);
+                if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+            }
+            app.graph.setDirtyCanvas(true, true);
+            app.queuePrompt(0);
+        } else {
+            alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
+        }
+    }).serialize = false;
+
+    targetNode.addWidget("button", "🎲 仅重摇 Pose 动作骨骼 (重新随机骨骼)", null, () => {
+        lockStageSeeds([7, 53, 23, 24]);
+        const node65 = app.graph?._nodes?.find((n) => n.id == 65 || n.type === "AsepriteLLMPoseGenerator");
+        if (node65 && Array.isArray(node65.widgets)) {
+            const seedW = node65.widgets.find((w) => w.name === "seed");
+            if (seedW && typeof seedW.value === "number") {
+                seedW.value = Math.floor(Math.random() * 1e14);
+                if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+            }
+            app.graph.setDirtyCanvas(true, true);
+            app.queuePrompt(0);
+        } else {
+            alert("当前未使用 AsepriteLLMPoseGenerator (Node 65) 自然语言骨骼生成器。");
+        }
+    }).serialize = false;
+}
+
 app.registerExtension({
     name: "aseprite.LLMPromptDirector",
     init() {
         hookPromptDialog();
+        const origQueuePrompt = app.queuePrompt;
+        app.queuePrompt = async function (number, batchCount) {
+            try {
+                app.graph?._nodes?.forEach((node) => {
+                    if (!node.widgets) return;
+                    node.widgets.forEach((w) => {
+                        if (w.name === "control_after_generate" && w.value === "randomize") {
+                            const seedW = node.widgets.find((sw) => sw.name === "seed" || sw.name === "noise_seed") || node.widgets[0];
+                            if (seedW && typeof seedW.value === "number") {
+                                seedW.value = Math.floor(Math.random() * 1e14);
+                                if (typeof seedW.callback === "function") seedW.callback(seedW.value);
+                            }
+                        }
+                    });
+                });
+                app.graph.setDirtyCanvas(true, true);
+            } catch (e) {
+                console.error("[aseprite] pre-queue randomize hook error:", e);
+            }
+            return origQueuePrompt.apply(this, arguments);
+        };
     },
     async beforeRegisterNodeDef(nodeType, nodeData) {
         hookPromptDialog();
@@ -287,70 +421,7 @@ app.registerExtension({
 
         if (nodeData.name === "AsepriteStageBridge") {
             const addBridgeButtons = (node) => {
-                if (node._bridgeButtonsAdded) return;
-                node._bridgeButtonsAdded = true;
-
-                const lockSamplersExcept = (targetIds) => {
-                    app.graph?._nodes?.forEach((n) => {
-                        if (!targetIds.includes(Number(n.id)) && (n.type?.includes("KSampler") || n.title?.includes("采样") || n.title?.includes("阶段 1") || n.title?.includes("阶段 2"))) {
-                            n.widgets?.forEach((w) => {
-                                if (w.name === "control_after_generate" || w.value === "randomize") {
-                                    w.value = "fixed";
-                                    if (typeof w.callback === "function") w.callback("fixed");
-                                }
-                            });
-                        }
-                    });
-                };
-
-                node.addWidget("button", "🎲 仅重摇 Pose 动作骨骼", null, () => {
-                    lockSamplersExcept([]);
-                    const node65 = app.graph?._nodes?.find((n) => n.id == 65 || n.type === "AsepriteLLMPoseGenerator");
-                    if (node65) {
-                        const seedW = node65.widgets?.find((w) => w.name === "seed");
-                        if (seedW) {
-                            seedW.value = Math.floor(Math.random() * 1e14);
-                            if (typeof seedW.callback === "function") seedW.callback(seedW.value);
-                        }
-                    }
-                    app.graph.setDirtyCanvas(true, true);
-                    app.queuePrompt(0);
-                }).serialize = false;
-
-                node.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
-                    // In i2i: target is 53; in anima: target is 7
-                    const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.id == 7 && n.title?.includes("Anima")) || (n.type === "KSampler" && n.title?.includes("1B")));
-                    if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
-                        lockSamplersExcept([Number(node1B.id)]);
-                        node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
-                        if (typeof node1B.widgets[0].callback === "function") node1B.widgets[0].callback(node1B.widgets[0].value);
-                        const ctrlW = node1B.widgets.find((w) => w.name === "control_after_generate");
-                        if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
-                    } else {
-                        alert("未找到 Anima KSampler 节点！");
-                        return;
-                    }
-                    app.graph.setDirtyCanvas(true, true);
-                    app.queuePrompt(0);
-                }).serialize = false;
-
-                node.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
-                    lockSamplersExcept([23, 24]);
-                    const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
-                    if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
-                        const seedW = node2.widgets.find((w) => w.name === "noise_seed" || w.name === "seed") || node2.widgets[1];
-                        if (seedW) {
-                            seedW.value = Math.floor(Math.random() * 1e14);
-                            if (typeof seedW.callback === "function") seedW.callback(seedW.value);
-                        }
-                        const ctrlW = node2.widgets.find((w) => w.name === "control_after_generate");
-                        if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
-                        app.graph.setDirtyCanvas(true, true);
-                        app.queuePrompt(0);
-                    } else {
-                        alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
-                    }
-                }).serialize = false;
+                addAsepriteRerollButtons(node);
             };
 
             const origCreated = nodeType.prototype.onNodeCreated;
@@ -602,69 +673,7 @@ app.registerExtension({
                 }
             });
             tplBtn.serialize = false;
-            const lockSamplersExcept = (targetIds) => {
-                app.graph?._nodes?.forEach((n) => {
-                    if (!targetIds.includes(Number(n.id)) && (n.type?.includes("KSampler") || n.title?.includes("采样") || n.title?.includes("阶段 1") || n.title?.includes("阶段 2"))) {
-                        n.widgets?.forEach((w) => {
-                            if (w.name === "control_after_generate" || w.value === "randomize") {
-                                w.value = "fixed";
-                                if (typeof w.callback === "function") w.callback("fixed");
-                            }
-                        });
-                    }
-                });
-            };
-
-            const r0Btn = this.addWidget("button", "🎲 仅重摇 Pose 动作骨骼", null, () => {
-                lockSamplersExcept([]);
-                const node65 = app.graph?._nodes?.find((n) => n.id == 65 || n.type === "AsepriteLLMPoseGenerator");
-                if (node65) {
-                    const seedW = node65.widgets?.find((w) => w.name === "seed");
-                    if (seedW) {
-                        seedW.value = Math.floor(Math.random() * 1e14);
-                        if (typeof seedW.callback === "function") seedW.callback(seedW.value);
-                    }
-                }
-                app.graph.setDirtyCanvas(true, true);
-                app.queuePrompt(0);
-            });
-            r0Btn.serialize = false;
-
-            const r1bBtn = this.addWidget("button", "🎲 仅重摇 Stage 1B (Anima 局部重绘)", null, () => {
-                const node1B = app.graph?._nodes?.find((n) => n.id == 53 || (n.id == 7 && n.title?.includes("Anima")) || (n.type === "KSampler" && n.title?.includes("1B")));
-                if (node1B && Array.isArray(node1B.widgets) && node1B.widgets.length > 0) {
-                    lockSamplersExcept([Number(node1B.id)]);
-                    node1B.widgets[0].value = Math.floor(Math.random() * 1e14);
-                    if (typeof node1B.widgets[0].callback === "function") node1B.widgets[0].callback(node1B.widgets[0].value);
-                    const ctrlW = node1B.widgets.find((w) => w.name === "control_after_generate");
-                    if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
-                } else {
-                    alert("未找到 Anima KSampler 节点！");
-                    return;
-                }
-                app.graph.setDirtyCanvas(true, true);
-                app.queuePrompt(0);
-            });
-            r1bBtn.serialize = false;
-
-            const r2Btn = this.addWidget("button", "🎲 仅重摇 Stage 2 (Wan2.2 动作视频)", null, () => {
-                lockSamplersExcept([23, 24]);
-                const node2 = app.graph?._nodes?.find((n) => n.id == 23 || n.type === "KSamplerAdvanced");
-                if (node2 && Array.isArray(node2.widgets) && node2.widgets.length > 1) {
-                    const seedW = node2.widgets.find((w) => w.name === "noise_seed" || w.name === "seed") || node2.widgets[1];
-                    if (seedW) {
-                        seedW.value = Math.floor(Math.random() * 1e14);
-                        if (typeof seedW.callback === "function") seedW.callback(seedW.value);
-                    }
-                    const ctrlW = node2.widgets.find((w) => w.name === "control_after_generate");
-                    if (ctrlW) { ctrlW.value = "fixed"; if (typeof ctrlW.callback === "function") ctrlW.callback("fixed"); }
-                    app.graph.setDirtyCanvas(true, true);
-                    app.queuePrompt(0);
-                } else {
-                    alert("未找到 Stage 2 (Wan2.2) KSampler 节点！");
-                }
-            });
-            r2Btn.serialize = false;
+            addAsepriteRerollButtons(this);
             const origConf = this.onConfigure;
             this.onConfigure = function () {
                 const rc = origConf ? origConf.apply(this, arguments) : undefined;
