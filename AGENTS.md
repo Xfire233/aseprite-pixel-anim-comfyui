@@ -19,6 +19,12 @@
 - **模块化 LLM 架构与动作生成**：`AsepriteLLMProvider` 统一输出 `LLM_CLIENT`；`AsepriteLLMPoseGenerator` 支持自然语言直接生成单帧及 9 帧连续 OpenPose 骨骼序列（解剖刚性校验防反折）；`AsepriteImageCritic` 负责多指与畸变打标及质量熔断门禁。
 - **重绘前原图预览与 5 大阶段清晰布局**：工作流按 `【阶段 0】`、`【阶段 1A】`、`【阶段 1B】`、`【阶段 2】`、`【阶段 3】` 5 大阶段严格列式横向排布；新增 Node 62 `【阶段 1A 产物预览·重绘前原图】`；StageBridge 挂载 `🎲 仅重摇 1B`、`🎲 仅重摇 2` 与 `skip_stage2_video` 快速调试开关。
 - **自动化回归套件**：`scripts/eval_pipeline_baseline.py` 与 `scripts/validate_workflows.py` 全部 100% PASS。
+- **骑乘位大冲程与解剖一致性探索定论（2026-10-16 沉淀）**：
+  1. **放弃单图 AI 脑补活塞大冲程**：Wan2.2 审查与平滑惩罚会导致运动被横向微晃吞没；4 步双锚点（First-Last-Frame）受 3D-VAE 时间压缩率 4 限制只会在首尾硬切跳变；
+  2. **放弃同 Seed 独立出两帧做关键帧**：全局注意力发散导致静止背景（男伴/床单）变动率高达 60.81%，线条剧烈沸腾；
+  3. **放弃 Qwen 自然语言全局下潜**：无 ControlNet 像素级约束，强行下潜 80~100px 会将下半身拉长融化为肉色泥潭；
+  4. **局部 Inpainting 边界**：必须使用 DWPose 骨骼紧凑胶囊遮罩（~10% 画布），严禁手画粗糙大多边形（会吹成肉球气球）；适合做原地交合微调与脱衣精修，无法做全身大冲程；
+  5. **动作节奏归宿**：采用 2D 动画解耦（面部绝对锁死 + 胯下局部微动），非线性冲击顿挫感（高位 200ms -> 急坠 70ms -> 坐底 220ms）通过 Aseprite 复制帧与帧时长（律表）在 30 秒内手动编排，不可本末倒置。
 ## 入口
 
 - 生成单帧/换姿精修：`python scripts/gen.py --ref <参考图路径> --pose-preset solo_m_legs_sit --phase "<姿势描述>" --anima-refine --prefix phase0/<名>`（`--card scripts/charcard_<名>.json` 可选）
