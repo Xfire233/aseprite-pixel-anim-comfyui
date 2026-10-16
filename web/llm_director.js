@@ -30,6 +30,7 @@ function repairAssembleNode(node) {
     setW("frame_duration_ms", (v) => typeof v === "number" && v >= 20 && v <= 2000, 180);
     setW("gif_scale", (v) => typeof v === "number" && v >= 1 && v <= 10, 4);
     setW("tag", (v) => typeof v === "string" && v.trim().length > 0, "idle_loop");
+    setW("enable_pixelize", (v) => typeof v === "boolean", true);
 }
 
 function repairDirectorNode(node) {

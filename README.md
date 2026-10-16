@@ -21,7 +21,7 @@ flowchart LR
 | GPU | NVIDIA，16 GB 显存（RTX 4070 Ti Super 上开发测试） |
 | 内存 / 硬盘 | 32 GB RAM；模型约 **62 GB**（不含 NSFW LoRA 约 61 GB） |
 | ComfyUI | 0.40+（需要 `LoraLoaderBypassModelOnly`、`RegexReplace` 等较新的内置节点），自带 Python |
-| Aseprite | **自备**（Steam 或官网版本均可）。装在常见位置会被自动找到，否则设环境变量 `ASEPRITE_WF_ASEPRITE` |
+| Aseprite | **可选**：生成 `.aseprite` 工程文件需要 Aseprite（Steam/官网版均可，自动探测）；**没有 Aseprite 也能正常导出 MP4 视频、高精度 GIF 动图与 Sprite Sheet 拼图**！ |
 | git | 安装脚本用来拉取依赖节点 |
 
 ## 安装
@@ -72,12 +72,30 @@ RISA 是一个需要本机 CUDA 编译的 INT8 注意力核（要求 CUDA Toolki
 2. 在 **NSFW Pose & Motion Library** 节点选骨骼预设，共 10 套（6 套单人、4 套双人）。
 3. 在 **LLM Prompt Director** 节点用中文写姿势和动作。默认用本地模板编译，不联网。想用大模型，自己填 `base_url`（任意 OpenAI 兼容接口），再点"获取模型"。
    - **角色卡提取**节点已接在参考图和提示词导演之间：运行时从参考图提取角色卡，写入 `scripts/charcard_<char_name>.json`，并直接替换导演里的 `charcard` 下拉框。只用本地 WD14，不联网；填了 `base_url` 和 `model` 才会调用 LLM 精修。换角色时先改 `char_name`，否则会覆盖旧的卡。想改用下拉框里已有的卡，把提取节点设为 Bypass（Ctrl+B）即可。
-4. 运行。结果在 `ComfyUI/output/aseprite/`：`.aseprite`、4 倍 `.gif`、`_sheet.png`。
+4. 运行。开箱默认参数即可直接出图，结果保存在 `ComfyUI/output/`：
+   - **高清视频**：`output/phase0/*.mp4`（由 SaveVideo 节点直出）
+   - **像素资产**：`output/aseprite/*.aseprite`、4 倍最近邻 `.gif`、`_sheet.png`。
+
+### 想要纯生成 MP4 视频，不接 Aseprite？
+
+完全支持！如果你只想用 Wan2.2 生成高质量的角色动作视频，不需要像素画或 Aseprite：
+1. **工作流直出 MP4**：工作流中的 `SaveVideo` 节点会自动把 14B 生成的高清动作视频存为 `.mp4`；
+2. **关闭像素化组装**：末尾的 `AsepritePixelizeAssemble` 节点支持 `enable_pixelize` 开关。将其设为 `False`（或选中该节点按 `Ctrl + B` 设为 Bypass），就会直接跳过像素化与组装步骤，零额外开销！
+3. **未安装 Aseprite 也能出图**：即使保持像素化开启，如果本机未安装 Aseprite，节点会自动无缝降级为 Python 原生 Pillow 导出高清 `.gif` 动图与 `_sheet.png`，仅跳过 `.aseprite` 工程文件，绝不报错中断！
+
+### 重摇控制（五合一独立局部重摇）
+
+在「提示词导演」或「阶段中继桥」节点底部，已内置快捷重摇套件：
+- **🎲 整体全部重摇**：所有阶段全部注入新种子，整张画面与动作完全换新；
+- **🎲 仅重摇 Stage 1**：锁死 Stage 2 视频，只重新抽立绘（秒级出静态图，方便挑图）；
+- **🎲 仅重摇 Stage 1B**（仅 i2i 工作流）：锁死 1A 原图姿势与构图，只重摇 Anima 局部去衣重绘；
+- **🎲 仅重摇 Stage 2**：**锁死上游 Stage 1 立绘（0 秒命中缓存），只让 Wan2.2 重新生成动作视频**！
+- **🎲 仅重摇 Pose 动作骨骼**：重新随机生成一套动作骨骼坐标。
+*(注：任何节点的采样控制设为 `randomize`（随机）时，系统会在提交瞬间自动刷新为全新 14 位随机种子，绝不锁死旧种子。)*
 
 **调参提示：**
-- **衣服没去干净**：改 Stage 1B 的 KSampler（标题"Anima masked inpaint"）的 seed 重摇。实测同一张图换 3 次 seed，通常有 2 次能完全去掉。
-- **重绘区域偏小**：调大 **Pose Region Mask** 节点的 `size`（默认 1.4）。
-
+- **衣服没去干净**：点击「仅重摇 Stage 1B」换种子重摇（或改 Stage 1B KSampler 的 seed）。
+- **重绘区域偏小**：调大 **Pose Region Mask** 节点的 `size`（默认 1.1~1.4）。
 ### 命令行（`scripts/`）
 
 需要 ComfyUI 已经启动。

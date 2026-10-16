@@ -252,6 +252,9 @@ class AsepritePixelizeAssemble:
                 "gif_scale": ("INT", {"default": 4, "min": 1, "max": 10, "step": 1}),
                 "tag": ("STRING", {"default": "idle_loop"}),
             },
+            "optional": {
+                "enable_pixelize": ("BOOLEAN", {"default": True, "tooltip": "开启则进行像素化下采样并导出像素动画；关闭则跳过像素化与组装，直接直通视频帧（适合仅需生成 MP4 视频的用户）"}),
+            },
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
@@ -283,7 +286,12 @@ class AsepritePixelizeAssemble:
         extra_pnginfo=None,
         **kwargs,
     ):
-        # Self-heal if an un-refreshed browser tab sent shifted widget values from the old 13-widget schema
+        enable_pixelize = kwargs.get("enable_pixelize", True)
+        if enable_pixelize is False:
+            report = "[AsepritePixelizeAssemble] 像素化与动画组装已由用户关闭。视频帧已直通输出，MP4 视频由前面的 SaveVideo 节点正常落盘。"
+            print(report)
+            _purge_vram_and_vbars()
+            return {"ui": {"images": []}, "result": (images, images[:1], report)}
         if not isinstance(name, str) or not name.strip():
             name = "wan_sprite"
         if not isinstance(canvas, str) or "x" not in canvas:

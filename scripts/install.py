@@ -195,6 +195,20 @@ def step_core_patch():
     run(["git", "apply", patch], cwd=COMFY_ROOT)
 
 
+def step_inputs():
+    print("[5/5] Example inputs & pose library")
+    comfy_in = os.path.join(COMFY_ROOT, "input")
+    os.makedirs(comfy_in, exist_ok=True)
+    import glob
+    for p in glob.glob(os.path.join(PROJECT_ROOT, "input", "*.*")):
+        dst = os.path.join(comfy_in, os.path.basename(p))
+        if not os.path.exists(dst):
+            shutil.copyfile(p, dst)
+    for p in glob.glob(os.path.join(PROJECT_ROOT, "poses", "nsfw_library", "*.png")):
+        dst = os.path.join(comfy_in, os.path.basename(p))
+        if not os.path.exists(dst):
+            shutil.copyfile(p, dst)
+    print("  inputs and pose skeletons synced to ComfyUI/input/")
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip-models", action="store_true")
@@ -211,6 +225,7 @@ def main():
         step_models(args.sfw)
     if not args.only_models:
         step_core_patch()
+    step_inputs()
     print("Done. Restart ComfyUI, then drag a file from workflows/ into the browser.")
 
 

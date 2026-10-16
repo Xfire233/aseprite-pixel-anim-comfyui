@@ -386,24 +386,38 @@ def main():
     if args.assemble:
         durs = args.durations or ",".join(["200"] * n)
         base = os.path.abspath(args.assemble)
-        cmd = [ASE, "-b",
-               "--script-param", f"width={W}",
-               "--script-param", f"height={H}",
-               "--script-param", f"frames={','.join(os.path.abspath(p) for p in paths)}",
-               "--script-param", f"durations={durs}",
-               "--script-param", f"tag={args.tag}",
-               "--script-param", f"out={base}",
-               "--script", os.path.join(ROOT, "scripts/assemble.lua")]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        print("assemble", r.returncode, r.stdout.strip())
-        stem = base[:-9] if base.endswith(".aseprite") else base
-        print(f"gif{args.gif_scale}x", subprocess.run(
-            [ASE, "-b", base, "--scale", str(args.gif_scale), "--save-as", stem + ".gif"],
-            capture_output=True, text=True, timeout=180).returncode)
-        print("sheet", subprocess.run(
-            [ASE, "-b", base, "--sheet", stem + "_sheet.png"],
-            capture_output=True, text=True, timeout=180).returncode)
-
+        has_ase = bool(ASE and (os.path.isfile(ASE) or shutil.which(ASE)))
+        if has_ase:
+            cmd = [ASE, "-b",
+                   "--script-param", f"width={W}",
+                   "--script-param", f"height={H}",
+                   "--script-param", f"frames={','.join(os.path.abspath(p) for p in paths)}",
+                   "--script-param", f"durations={durs}",
+                   "--script-param", f"tag={args.tag}",
+                   "--script-param", f"out={base}",
+                   "--script", os.path.join(ROOT, "scripts/assemble.lua")]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            print("assemble", r.returncode, r.stdout.strip())
+            stem = base[:-9] if base.endswith(".aseprite") else base
+            print(f"gif{args.gif_scale}x", subprocess.run(
+                [ASE, "-b", base, "--scale", str(args.gif_scale), "--save-as", stem + ".gif"],
+                capture_output=True, text=True, timeout=180).returncode)
+            print("sheet", subprocess.run(
+                [ASE, "-b", base, "--sheet", stem + "_sheet.png"],
+                capture_output=True, text=True, timeout=180).returncode)
+        else:
+            stem = base[:-9] if base.endswith(".aseprite") else base
+            dur_list = [int(d) for d in durs.split(",") if d.isdigit()]
+            dur_val = dur_list[0] if dur_list else 180
+            scale = max(1, int(args.gif_scale))
+            gif_frames = [im.resize((W * scale, H * scale), Image.NEAREST) for im in ims]
+            if gif_frames:
+                gif_frames[0].save(stem + ".gif", save_all=True, append_images=gif_frames[1:], duration=dur_val, loop=0, disposal=2)
+            sheet_img = Image.new("RGBA", (W * len(ims), H), (0, 0, 0, 0))
+            for idx_im, im in enumerate(ims):
+                sheet_img.paste(im, (idx_im * W, 0))
+            sheet_img.save(stem + "_sheet.png")
+            print("[pixelize] Aseprite CLI not found; assembled .gif and _sheet.png using Pillow fallback (.aseprite file skipped).")
 
 if __name__ == "__main__":
     main()

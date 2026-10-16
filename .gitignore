@@ -1,7 +1,9 @@
 # --- Local generation artefacts (large, personal, regenerable) ---
 work/
 output/
-input/
+input/*
+!input/example.png
+!input/Imas_gakuen_cidol-shro-1-000_0-full.webp
 *.aseprite
 *.gif
 *.mp4
@@ -27,6 +29,7 @@ input/
 scripts/charcard_*.json
 scripts/charcard.json
 !scripts/charcard.example.json
+!scripts/charcard_hiro.json
 # --- Python / OS ---
 __pycache__/
 *.pyc
