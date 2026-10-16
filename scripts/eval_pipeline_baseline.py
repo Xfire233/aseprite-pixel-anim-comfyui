@@ -69,6 +69,28 @@ def check_prompt_director():
     assert "masterpiece" in anima_pos, f"FAIL: 'masterpiece' missing from anima_positive: '{anima_pos}'"
     print(f"   anima_positive len={len(anima_pos)}, contains masterpiece and pose tags.")
     print("   [PASS] Director outputs valid non-empty Anima tags.")
+    # Test LLM compilation path with petite character (regression for UnboundLocalError anima_neg)
+    director._request_llm_text = lambda *args, **kwargs: (
+        '{\n'
+        '  "char_appearance_tags": "1girl, solo, short hair",\n'
+        '  "char_wan_subject": "a 2D anime girl",\n'
+        '  "anima_positive": "masterpiece, best quality, 1girl, solo",\n'
+        '  "anima_negative": "worst quality, low quality",\n'
+        '  "wan_positive": "anime style, girl",\n'
+        '  "wan_negative": "blurry"\n'
+        '}'
+    )
+    res_llm = director._compile_core(
+        base_url="http://mock",
+        api_key="mock_key",
+        model="mock_model",
+        charcard="charcard_hiro.json (hiro)",
+        user_prompt="测试姿势，平胸贫乳",
+        system_prompt="sys",
+    )
+    assert len(res_llm[1].strip()) > 10, "FAIL: anima_negative is empty or invalid"
+    assert "large breasts" in res_llm[1], f"FAIL: expected 'large breasts' in anima_negative: {res_llm[1]}"
+    print("   [PASS] Director _compile_core LLM petite path regression passed.")
 
 def check_lora_and_workflow_parameters():
     print("[Check 3/6] Workflow LoRA and Default Parameters...")

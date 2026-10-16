@@ -1376,6 +1376,7 @@ class AsepriteLLMPromptDirector:
             return out
 
         anima_pos = _expand(parsed.get("anima_positive", ""))
+        anima_neg = _expand(parsed.get("anima_negative", ""))
         has_pose_guide = (pose_id != "none" and bool(pose_meta)) or bool(custom_pose_name and custom_pose_name.strip())
         is_single_image = not has_pose_guide
         if "picture 1" not in anima_pos.lower() and "image 1" not in anima_pos.lower():
@@ -1430,9 +1431,6 @@ class AsepriteLLMPromptDirector:
             ]:
                 anima_pos = anima_pos.replace(bad_h, good_h)
 
-        anima_neg = _expand(parsed.get("anima_negative", ""))
-        if is_petite and "large breasts" not in anima_neg.lower():
-            anima_neg = f"large breasts, huge breasts, {anima_neg}"
         if is_duo:
             anima_neg = re.sub(r"\b(multiple girls|2girls)\b\s*,?", "", anima_neg).strip(" ,")
         if has_hand_action or has_crotch_touch:
