@@ -1011,49 +1011,88 @@ class AsepriteLLMPromptDirector:
         pose_w = pose_meta.get("wan_motion_prompt") or "gently breathing with subtle chest and shoulder rise and fall"
 
         # Only override pose_q / pose_a from Chinese text when no preset skeleton was selected (preserves duo_* and all preset skeletons!)
-        if not pose_meta:
-            # 1. Parse custom hand actions globally across all poses
-            custom_hands_q = []
-            custom_hands_a = []
-            # Hand to mouth / oral / blowjob
-            if any(k in up for k in ("嘴前", "含入", "口交", "含住", "握住肉棒", "举在嘴前", "双手在嘴", "吞吐", "嘴唇")):
-                custom_hands_q.append("both hands raised in front of her mouth holding the penis shaft")
-                custom_hands_a.append("hands raised, holding penis, fellatio, oral, blowjob, penis in mouth")
-            elif any(k in up for k in ("抬手", "举手", "双手抬起", "举起双手", "手抬起来")):
-                custom_hands_q.append("both arms raised up with hands held high")
-                custom_hands_a.append("arms up, hands raised")
+        # 1. Parse custom hand actions globally from user prompt
+        custom_hands_q = []
+        custom_hands_a = []
+        # Hand to mouth / oral / blowjob
+        if any(k in up for k in ("嘴前", "含入", "口交", "含住", "握住肉棒", "举在嘴前", "双手在嘴", "吞吐", "嘴唇", "吹箫", "深喉")):
+            custom_hands_q.append("both hands raised in front of her mouth holding the penis shaft")
+            custom_hands_a.append("hands raised, holding penis, fellatio, oral, blowjob, penis in mouth")
+        elif any(k in up for k in ("抬手", "举手", "双手抬起", "举起双手", "手抬起来", "挥手", "招手", "双手举高", "高举双手")):
+            custom_hands_q.append("both arms raised straight up high into the air with open palms waving")
+            custom_hands_a.append("arms up, hands raised, waving")
+        elif any(k in up for k in ("捂嘴", "捂着嘴", "遮嘴", "衣袖捂嘴")):
+            custom_hands_q.append("one hand raised covering own mouth shyly")
+            custom_hands_a.append("covering own mouth, hand over mouth, shy")
 
-            # Hand to breast
-            if any(k in up for k in ("揉胸", "摸胸", "托胸", "抓胸", "抚摸胸部", "放在胸前", "放在胸口")):
-                if "左手" in up:
-                    custom_hands_q.append("left hand placed over chest fondling own breast")
-                    custom_hands_a.append("left hand on own breast, fondling own breast")
-                elif "右手" in up:
-                    custom_hands_q.append("right hand placed over chest fondling own breast")
-                    custom_hands_a.append("right hand on own breast, fondling own breast")
-                else:
-                    custom_hands_q.append("one hand placed over chest fondling own breast")
-                    custom_hands_a.append("hand on own breast, fondling own breast")
+        # Hand to breast
+        if any(k in up for k in ("揉胸", "摸胸", "托胸", "抓胸", "抚摸胸部", "放在胸前", "放在胸口", "双乳")):
+            if "左手" in up and "右手" not in up:
+                custom_hands_q.append("left hand placed over chest fondling own breast")
+                custom_hands_a.append("left hand on own breast, fondling own breast")
+            elif "右手" in up and "左手" not in up:
+                custom_hands_q.append("right hand placed over chest fondling own breast")
+                custom_hands_a.append("right hand on own breast, fondling own breast")
+            else:
+                custom_hands_q.append("one hand placed over chest fondling own breast")
+                custom_hands_a.append("hand on own breast, fondling own breast")
 
-            # Hand to crotch / masturbation
-            if any(k in up for k in ("伸入下体", "摸下体", "放在裆部", "自慰", "抠逼", "扣逼", "手指插入", "触碰私处")):
-                if "右手" in up:
-                    custom_hands_q.append("right hand at pelvis center touching herself")
-                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
-                elif "左手" in up:
-                    custom_hands_q.append("left hand at pelvis center touching herself")
-                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
-                else:
-                    custom_hands_q.append("one hand at pelvis center touching herself")
-                    custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+        # Hand to crotch / masturbation
+        if any(k in up for k in ("伸入下体", "摸下体", "放在裆部", "自慰", "抠逼", "扣逼", "手指插入", "触碰私处", "手在裆", "触摸私处")):
+            if "右手" in up and "左手" not in up:
+                custom_hands_q.append("right hand at pelvis center touching herself")
+                custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+            elif "左手" in up and "右手" not in up:
+                custom_hands_q.append("left hand at pelvis center touching herself")
+                custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
+            else:
+                custom_hands_q.append("hand placed between legs at pelvis center touching herself")
+                custom_hands_a.append("fingering, masturbation, hand between legs, touching own pussy")
 
+        # Other hand actions
+        if any(k in up for k in ("叉腰", "手叉腰", "双手叉腰")):
+            custom_hands_q.append("both hands placed firmly on her hips")
+            custom_hands_a.append("hands on hips")
+        elif any(k in up for k in ("抱胸", "双手抱胸", "抱住自己")):
+            custom_hands_q.append("arms crossed over her chest")
+            custom_hands_a.append("arms crossed")
+        elif any(k in up for k in ("抱头", "双手抱头", "枕在脑后")):
+            custom_hands_q.append("hands clasped behind her head")
+            custom_hands_a.append("hands behind head")
+        elif any(k in up for k in ("抚摸大腿", "摸大腿", "扶大腿", "双手放在大腿", "手在大腿")):
+            custom_hands_q.append("both hands resting gently on her thighs")
+            custom_hands_a.append("hands on own thighs")
+        elif any(k in up for k in ("撑地", "双手撑地", "扶地", "手在地上")):
+            custom_hands_q.append("both hands resting on the floor supporting her body")
+            custom_hands_a.append("hands on floor, supporting self")
+        elif any(k in up for k in ("背手", "手在背后", "双手放在身后")):
+            custom_hands_q.append("arms behind her back")
+            custom_hands_a.append("arms behind back")
+        elif any(k in up for k in ("自然下垂", "垂在身体两侧", "两手垂放", "手放在两侧")):
+            custom_hands_q.append("both arms resting naturally at her sides")
+            custom_hands_a.append("arms at sides")
+
+        # 2. If a preset skeleton exists, integrate custom hands smoothly
+        if pose_meta:
+            if custom_hands_q:
+                for h_pat in [
+                    r",? both arms placed outward to the sides with hands resting on the floor beside her outer hips away from her body",
+                    r",? with hands resting on the floor beside her outer hips away from her body",
+                    r",? with both hands resting on the floor outside her hips for support",
+                    r",? with hands resting on the floor",
+                    r",? arms at sides",
+                ]:
+                    pose_q = re.sub(h_pat, "", pose_q, flags=re.IGNORECASE)
+                pose_q = f"{pose_q}, with {', and '.join(custom_hands_q)}"
+                for a_pat in [r"\barms at sides\b,?", r"\bhands on floor\b,?", r"\bhands on outer knees\b,?"]:
+                    pose_a = re.sub(a_pat, "", pose_a, flags=re.IGNORECASE).strip(" ,")
+                pose_a = f"{pose_a}, {', '.join(custom_hands_a)}"
+        else:
+            # No preset skeleton: build complete pose from prompt keywords
             if any(k in up for k in ("蹲", "骑乘")):
                 if custom_hands_q:
                     hand_q = f"with {', and '.join(custom_hands_q)}"
                     hand_a = f"{', '.join(custom_hands_a)}"
-                elif any(h in up for h in ("扶在地", "撑地", "手在地", "扶地")):
-                    hand_q = "with both hands resting on the floor outside her hips for support"
-                    hand_a = "hands on floor, supporting self"
                 else:
                     hand_q = "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"
                     hand_a = "arms spread outward, hands on outer knees"
@@ -1075,8 +1114,8 @@ class AsepriteLLMPromptDirector:
                     pose_q = f"kneeling on both knees facing forward with her head slightly tilted up {hand_q}, entire full body inside the frame"
                     pose_a = f"1girl, solo, kneeling, looking up, {hand_a}, full frontal"
                 else:
-                    pose_q = "kneeling upright on both knees facing forward with her back arched and arms behind her back, entire full body inside the frame"
-                    pose_a = "1girl, solo, kneeling, arched back, arms behind back, chest out, full frontal"
+                    pose_q = "kneeling on both knees facing forward, entire full body inside the frame"
+                    pose_a = "1girl, solo, kneeling, full frontal"
             elif any(k in up for k in ("趴", "四肢着地", "后入")):
                 pose_q = "on all fours on the floor with her hips raised high and head turned to look back at the viewer"
                 pose_a = "1girl, solo, all fours, doggy style, top-down bottom-up, looking back, arched back"
@@ -1096,6 +1135,9 @@ class AsepriteLLMPromptDirector:
                     hand_a = f"{', '.join(custom_hands_a)}"
                     pose_q = f"standing facing forward {hand_q}, entire full body inside the frame"
                     pose_a = f"1girl, solo, standing, {hand_a}, full frontal"
+                else:
+                    pose_q = "standing facing forward with a gentle expression, entire full body from head to feet inside the frame with white margins"
+                    pose_a = "1girl, solo, standing, full frontal"
         has_oral_motion = any(k in up for k in ("口交", "含入", "含住", "嘴前", "吞吐", "吹箫", "前后吞吐", "头部前后"))
         has_active_motion = any(k in up for k in ("并起伏", "上下起伏", "骑乘", "弹跳", "律动", "抽插", "抽送", "摇晃", "摆动", "挺腰"))
         is_default_breath_suffix = up.endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏")
@@ -1127,7 +1169,7 @@ class AsepriteLLMPromptDirector:
             pose_q = f"{pose_q}, {', '.join(extra_qwen)}"
         return pose_a, pose_q, pose_w
 
-    def build_local_template(self, charcard: str, pose_preset: str = "none (不使用预设骨骼)", user_prompt: str = "", wd14_override: dict = None) -> tuple:
+    def build_local_template(self, charcard: str, pose_preset: str = "none (不使用预设骨骼)", user_prompt: str = "", wd14_override: dict = None, custom_pose_name: str = "") -> tuple:
         macros = dict(wd14_override) if wd14_override else dict(self._get_charcard_macros(charcard))
         pose_id = (pose_preset or "none").split(" ")[0].strip()
         pose_meta = _load_pose_library().get(pose_id, {}) if pose_id != "none" else {}
@@ -1152,28 +1194,34 @@ class AsepriteLLMPromptDirector:
         raw_tokens = [t.strip() for t in f"{macros['anima_tags']}, {pose_a}, full body, white background, simple background".split(",") if t.strip()]
         dedup_tags = ", ".join(dict.fromkeys(raw_tokens))
 
-        is_single_image = (pose_id == "none") or (not pose_meta)
-        if is_single_image:
+        has_pose_guide = (pose_id != "none" and bool(pose_meta)) or bool(custom_pose_name and custom_pose_name.strip())
+        if has_pose_guide:
+            anima_pos = (
+                f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                f"Picture 2 is a skeleton pose guide. "
+                f"Redraw the character from Picture 1 in the exact pose of Picture 2: {pose_q}. "
+                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1. "
+                f"Plain white background, clean anime illustration style. "
+                f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
+            ).strip(" ,")
+        else:
             anima_pos = (
                 f"2D flat cel-shaded anime illustration, clean anime lineart. "
                 f"Keep the exact 2D anime character identity, face, hair, and accessories from image 1 ({macros['wan_subject']}). "
                 f"Redraw her: {pose_q}. "
                 f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
             ).strip(" ,")
-        else:
-            anima_pos = (
-                f"Picture 1 is the character reference ({macros['wan_subject']}). "
-                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
-                f"and redraw her in the pose of Picture 2: {pose_q}. "
-                f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
-            ).strip(" ,")
 
-        anima_neg = f"worst quality, low quality, score_1, score_2, score_3, realistic, 3d, blurry, jpeg artifacts, sepia, {neg_multi}cropped, out of frame, bad anatomy, extra limbs, hands between legs, hands covering crotch, hands on inner thighs, {macros['neg_tags']}".strip(" ,")
+        up_str = str(user_prompt or "")
+        has_crotch_touch = any(k in up_str for k in ("自慰", "摸下体", "伸入下体", "抠逼", "扣逼", "手在裆", "触摸私处", "触碰私处", "手摸私处")) or ("fingering" in anima_pos) or ("masturbation" in anima_pos)
+        has_hand_action = has_crotch_touch or any(k in up_str for k in ("手", "摸", "抚", "握", "揉", "抓", "自慰", "扣", "抠", "抱", "叉腰", "抬手", "举手"))
+        neg_hand_filter = "" if has_hand_action else "hands between legs, hands covering crotch, hands on inner thighs, "
+        anima_neg = f"worst quality, low quality, score_1, score_2, score_3, realistic, 3d, blurry, jpeg artifacts, sepia, {neg_multi}cropped, out of frame, bad anatomy, extra limbs, {neg_hand_filter}{macros['neg_tags']}".strip(" ,")
         wan_pos = f"anime style, {macros['wan_subject']} {pose_q.split(',')[0]} on a plain white background, {pose_w}, static camera, fixed composition, full body, clean 2D anime illustration".strip(" ,")
         wan_neg = "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走，camera movement, zoom, morphing, warping, changing clothes"
         return (anima_pos, anima_neg, wan_pos, wan_neg)
 
-    def _compile_core(self, base_url, api_key, model, charcard, user_prompt, system_prompt, reference_image=None, pose_preset="none (不使用预设骨骼)"):
+    def _compile_core(self, base_url, api_key, model, charcard, user_prompt, system_prompt, reference_image=None, pose_preset="none (不使用预设骨骼)", custom_pose_name=""):
         ref_hash = ""
         image_data_url = ""
         wd14_info = None
@@ -1297,7 +1345,8 @@ class AsepriteLLMPromptDirector:
             return out
 
         anima_pos = _expand(parsed.get("anima_positive", ""))
-        is_single_image = (pose_id == "none") or (not pose_meta)
+        has_pose_guide = (pose_id != "none" and bool(pose_meta)) or bool(custom_pose_name and custom_pose_name.strip())
+        is_single_image = not has_pose_guide
         if "picture 1" not in anima_pos.lower() and "image 1" not in anima_pos.lower():
             if is_single_image:
                 anima_pos = (
@@ -1325,9 +1374,11 @@ class AsepriteLLMPromptDirector:
         raw_tokens = [t.strip() for t in anima_pos.split(",") if t.strip()]
         anima_pos = ", ".join(dict.fromkeys(raw_tokens))
 
-        is_masturbating = any(k in str(user_prompt) for k in ("自慰", "摸下体", "伸入下体", "抠逼", "扣逼", "手在裆", "触摸私处", "触碰私处")) or ("fingering" in anima_pos) or ("masturbation" in anima_pos)
-        if not is_masturbating:
-            # Only strip crotch-occluding hands for pure standing/idle poses where crotch should stay visible
+        up_str = str(user_prompt or "")
+        has_crotch_touch = any(k in up_str for k in ("自慰", "摸下体", "伸入下体", "抠逼", "扣逼", "手在裆", "触摸私处", "触碰私处", "手摸私处")) or ("fingering" in anima_pos) or ("masturbation" in anima_pos)
+        has_hand_action = has_crotch_touch or any(k in up_str for k in ("手", "摸", "抚", "握", "揉", "抓", "自慰", "扣", "抠", "抱", "叉腰", "抬手", "举手"))
+
+        if not has_crotch_touch and not has_hand_action:
             for bad_h, good_h in [
                 ("with both hands resting on her thighs", "with both arms angled wide outward and hands resting on the outer sides of her knees far away from her crotch"),
                 ("hands resting on her thighs", "hands resting on outer knee edges away from pelvis"),
@@ -1342,8 +1393,7 @@ class AsepriteLLMPromptDirector:
             anima_neg = f"large breasts, huge breasts, {anima_neg}"
         if is_duo:
             anima_neg = re.sub(r"\b(multiple girls|2girls)\b\s*,?", "", anima_neg).strip(" ,")
-        if is_masturbating:
-            # Purge any negative tokens that forbid hand between legs!
+        if has_hand_action or has_crotch_touch:
             anima_neg = re.sub(r"\b(hands between legs|hands covering crotch|hands on inner thighs)\b\s*,?", "", anima_neg, flags=re.IGNORECASE).strip(" ,")
         elif "hands covering crotch" not in anima_neg:
             anima_neg = f"{anima_neg}, hands between legs, hands covering crotch, hands on inner thighs"
@@ -1419,7 +1469,7 @@ class AsepriteLLMPromptDirector:
         inputs_changed = (prev_sig is not None and cur_sig != prev_sig)
 
         if mode_key == "manual_override" or (mode_key == "compile_if_empty" and has_manual and not inputs_changed and not is_auto_filled_stale):
-            tpl = self.build_local_template(charcard, pose_preset, user_prompt=user_prompt)
+            tpl = self.build_local_template(charcard, pose_preset, user_prompt=user_prompt, custom_pose_name=custom_pose_name)
             res = (
                 stage1_positive.strip() if (stage1_positive and stage1_positive.strip()) else tpl[0],
                 stage1_negative.strip() if (stage1_negative and stage1_negative.strip()) else tpl[1],
@@ -1437,7 +1487,7 @@ class AsepriteLLMPromptDirector:
 
         res = self._compile_core(
             base_url, api_key, model, charcard, user_prompt, system_prompt,
-            reference_image=reference_image, pose_preset=pose_preset,
+            reference_image=reference_image, pose_preset=pose_preset, custom_pose_name=custom_pose_name,
         )
         self.__class__._LAST_COMPILED_SIG = cur_sig
         self.__class__._LAST_COMPILED_PROMPTS = tuple(s.strip() for s in res)
