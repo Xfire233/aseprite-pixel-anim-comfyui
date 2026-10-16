@@ -52,7 +52,11 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专精于 Anima (Danbooru Tag 图像模�
    - 彻底剥离战术配件与装备垃圾：在进行脱衣/下身暴露/做动作时，严禁把原图立绘里繁复的战术背带(harness)、腰包(pouch)、手套(gloves)、过膝袜(thighhighs)、战术长靴(combat boots)、护膝(knee pads)、电锯/法杖/武器等配件词塞入正向词！这些琐碎配件会极度稀释扩散模型的注意力预算，导致四肢与装备相互缠结撕裂、M腿等大动作彻底崩溃；
    - 下半身极简纯净：涉及下身脱除或裸露时，下半身只保留极简的 `bottomless, no panties, bare legs, bare pussy`，让模型将全部注意力集中于解剖学透视与动作骨骼！
 3. 精准脱衣：若用户仅要求“下身不穿裤子/下装暴露”，只脱下半身（bottomless, no panties, bare legs），上衣保持原样；严禁在用户未明确要求脱上衣时擅自添加 topless 或 exposed breasts！
-4. 严禁冗余堆叠：去除所有重复出现的 tag，正面词总词条数量严格控制在 30 个以内，保持提示词绝对精炼、高效、聚焦。
+4. 双人姿势（Duo Pose）稳定性与画风统一准则：
+   - 角色层级明确：主角色（Picture 1 的二次元角色）占据视觉前景，副角色统一描述为 `faceless 2D anime male partner`，严禁写成真实真人或半写实面孔！
+   - 画风 100% 统一：双人场景正面词强包含 `2d, cel shading, clean lineart, anime style, 1girl, 1boy, hetero, sex`，负面词必须封杀 `photorealistic, realistic, 3d, realistic skin, real photo, western comic`；
+   - 大冲程起伏动作法则（骑乘/抽送）：骑乘位视频动作必须编译为大幅度垂直起伏冲程（large amplitude riding motion, intense deep rhythmic up-and-down pelvic bouncing, smoothly lifting her hips up and driving them down with full range of motion, pronounced vertical stroke, vigorous hip bounce and chest bounce, full body continuous smooth riding），负面词封杀 `static, still, motionless, stationary, subtle, barely moving`！
+5. 严禁冗余堆叠：去除所有重复出现的 tag，正面词总词条数量严格控制在 30 个以内，保持提示词绝对精炼、高效、聚焦。
 请根据用户输入的【中文姿势与动作描述】，严格以 JSON 格式输出以下 4 个字段（保留宏名原样输出）：
 {
   "anima_positive": "masterpiece, best quality, score_9, score_8, newest, {{CHARCARD_ANIMA_TAGS}}, <精确姿势与视角标签，精炼无重复>, full body, white background, simple background",
@@ -1151,8 +1155,11 @@ class AsepriteLLMPromptDirector:
                     pose_a = "1girl, solo, standing, full frontal"
         has_oral_motion = any(k in up for k in ("口交", "含入", "含住", "嘴前", "吞吐", "吹箫", "前后吞吐", "头部前后"))
         has_active_motion = any(k in up for k in ("并起伏", "上下起伏", "骑乘", "弹跳", "律动", "抽插", "抽送", "摇晃", "摆动", "挺腰"))
+        has_riding_motion = any(k in up for k in ("骑乘", "女上位", "上下起伏", "起伏上下", "骑乘位", "挺腰起伏")) or any(k in pose_meta.get("id", "") for k in ("cowgirl", "riding", "squat"))
         is_default_breath_suffix = up.endswith("动作：缓慢呼吸，胸口与肩膀轻微起伏")
-        if has_oral_motion:
+        if has_riding_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃")) or pose_meta.get("id", "").startswith("duo_cowgirl")):
+            pose_w = "large amplitude riding motion, intense deep rhythmic up-and-down pelvic bouncing, smoothly lifting her hips up and driving them down with full range of motion, pronounced vertical stroke, vigorous hip bounce and chest bounce, expressive dynamic sexual motion, full body continuous smooth riding"
+        elif has_oral_motion:
             pose_w = "large amplitude rhythmic oral sex motion, vigorous pronounced head and torso bobbing deeply back and forth along the penis shaft, head thrusting forward and backward with full range of motion, mouth sliding all the way up and down the shaft, dynamic expressive movement"
         elif has_active_motion and (is_default_breath_suffix or any(k in up.split("动作")[-1] for k in ("起伏", "骑乘", "弹跳", "律动", "抽插", "摇晃"))):
             if pose_meta.get("wan_motion_prompt") and any(k in pose_meta.get("id", "") for k in ("squat", "cowgirl", "doggy", "arch", "mating", "standing_behind")):
@@ -1208,14 +1215,25 @@ class AsepriteLLMPromptDirector:
 
         has_pose_guide = (pose_id != "none" and bool(pose_meta)) or bool(custom_pose_name and custom_pose_name.strip())
         if has_pose_guide:
-            anima_pos = (
-                f"Picture 1 is the character reference ({macros['wan_subject']}). "
-                f"Picture 2 is a skeleton pose guide. "
-                f"Redraw the character from Picture 1 in the exact pose of Picture 2: {pose_q}. "
-                f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1. "
-                f"Plain white background, clean anime illustration style. "
-                f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
-            ).strip(" ,")
+            if is_duo:
+                anima_pos = (
+                    f"Picture 1 is the main female character ({macros['wan_subject']}). "
+                    f"Picture 2 is a dual-character skeleton pose guide showing two interacting characters. "
+                    f"Redraw the 2D anime girl from Picture 1 together with a faceless 2D anime male partner in the exact interaction of Picture 2: {pose_q}. "
+                    f"Keep the female character's exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1. "
+                    f"Both characters are drawn in 100% unified 2D cel-shaded anime illustration style with clean lineart. "
+                    f"Plain white background. "
+                    f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
+                ).strip(" ,")
+            else:
+                anima_pos = (
+                    f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                    f"Picture 2 is a skeleton pose guide. "
+                    f"Redraw the character from Picture 1 in the exact pose of Picture 2: {pose_q}. "
+                    f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1. "
+                    f"Plain white background, clean anime illustration style. "
+                    f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, {dedup_tags}"
+                ).strip(" ,")
         else:
             anima_pos = (
                 f"2D flat cel-shaded anime illustration, clean anime lineart. "
@@ -1367,9 +1385,19 @@ class AsepriteLLMPromptDirector:
                     f"Keep the exact 2D anime character identity, face, hair, and accessories from image 1 ({macros['wan_subject']}). "
                     f"Redraw her in the pose: {pose_q_local}. {anima_pos}"
                 )
+            elif is_duo:
+                anima_pos = (
+                    f"Picture 1 is the main female character ({macros['wan_subject']}). "
+                    f"Picture 2 is a dual-character skeleton pose guide showing two interacting characters. "
+                    f"Redraw the 2D anime girl from Picture 1 together with a faceless 2D anime male partner in the exact interaction of Picture 2: {pose_q_local}. "
+                    f"Keep the female character's exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1. "
+                    f"Both characters are drawn in 100% unified 2D cel-shaded anime illustration style with clean lineart. "
+                    f"Plain white background. {anima_pos}"
+                )
             else:
                 anima_pos = (
                     f"Picture 1 is the character reference ({macros['wan_subject']}). "
+                    f"Picture 2 is a skeleton pose guide. "
                     f"Keep her exact 2D anime face, hair, eyes, hair ornaments, and identity from Picture 1, "
                     f"and redraw her in the pose of Picture 2 ({pose_q_local}). {anima_pos}"
                 )
