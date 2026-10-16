@@ -1183,13 +1183,14 @@ class AsepriteLLMPromptDirector:
         # Enforce character body build & breast size consistency to prevent NSFW LoRA OOC distortion
         is_petite = any(k in str(macros).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
         if is_petite:
+            pose_q = re.sub(r"\b(hanging breasts|large breasts|huge breasts|cleavage|bare ass)\b\s*,?", "", pose_q, flags=re.IGNORECASE)
+            pose_a = re.sub(r"\b(hanging breasts|large breasts|huge breasts|cleavage|ass)\b\s*,?", "", pose_a, flags=re.IGNORECASE)
             if "small breasts" not in macros.get("anima_tags", "").lower():
-                macros["anima_tags"] = f"small breasts, flat chest, slender, {macros['anima_tags']}"
+                macros["anima_tags"] = f"small breasts, flat chest, slender, narrow hips, pink nipples, {macros['anima_tags']}"
             if "large breasts" not in macros.get("neg_tags", "").lower():
-                macros["neg_tags"] = f"large breasts, huge breasts, {macros['neg_tags']}"
+                macros["neg_tags"] = f"large breasts, huge breasts, hanging breasts, cleavage, wide hips, voluptuous, curvy, thick thighs, fat, plump, big ass, {macros['neg_tags']}"
             if "small" not in pose_q.lower() and "flat" not in pose_q.lower():
-                pose_q = f"{pose_q}, slender flat-chested petite build with small flat breasts"
-
+                pose_q = f"{pose_q}, slender flat-chested petite build with small flat breasts and narrow hips without large breast mounds"
         # Deduplicate tags to avoid token budget bloat
         raw_tokens = [t.strip() for t in f"{macros['anima_tags']}, {pose_a}, full body, white background, simple background".split(",") if t.strip()]
         dedup_tags = ", ".join(dict.fromkeys(raw_tokens))
@@ -1366,10 +1367,11 @@ class AsepriteLLMPromptDirector:
         # Enforce body build / breast size consistency & prevent NSFW LoRA OOC explosion
         is_petite = any(k in str(macros).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
         if is_petite:
-            anima_pos = re.sub(r"\b(large breasts|huge breasts|cleavage)\b\s*,?", "", anima_pos, flags=re.IGNORECASE)
+            anima_pos = re.sub(r"\b(large breasts|huge breasts|hanging breasts|cleavage|wide hips|curvy)\b\s*,?", "", anima_pos, flags=re.IGNORECASE)
             if "flat chest" not in anima_pos.lower():
-                anima_pos = f"{anima_pos}, small breasts, flat chest, slender"
-
+                anima_pos = f"{anima_pos}, small breasts, flat chest, slender, narrow hips, pink nipples"
+            if "large breasts" not in anima_neg.lower():
+                anima_neg = f"large breasts, huge breasts, hanging breasts, cleavage, wide hips, voluptuous, curvy, thick thighs, fat, plump, big ass, {anima_neg}"
         # Clean deduplication
         raw_tokens = [t.strip() for t in anima_pos.split(",") if t.strip()]
         anima_pos = ", ".join(dict.fromkeys(raw_tokens))
@@ -1889,7 +1891,7 @@ class AsepritePoseRegionMask:
                     if any(k in t for k in ("脸", "面", "头", "表情")): face = True
 
             # 3. Dynamic Natural Language Keywords
-            if any(k in p for k in ("揉胸", "摸胸", "托胸", "抓胸", "露胸", "上身裸", "乳房", "乳头", "胸部", "敞开")):
+            if any(k in p for k in ("揉胸", "摸胸", "托胸", "抓胸", "露胸", "上身裸", "乳房", "乳头", "胸部", "敞开", "贫乳", "平胸", "赤裸", "全裸", "裸体")):
                 chest = True
             if any(k in p for k in ("下体", "私处", "裆部", "自慰", "脱裤", "不穿裤", "底裤", "内裤", "胖次", "短裤", "开腿", "分腿", "骨盆", "阴部", "小穴")):
                 pelvis = True

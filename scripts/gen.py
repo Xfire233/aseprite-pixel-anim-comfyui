@@ -59,8 +59,8 @@ def main():
     ap.add_argument("--seed", type=int, default=777001)
     ap.add_argument("--canvas", default="512x768", help="generation resolution WxH (default: 512x768, or 384x576 for fastest)")
     ap.add_argument("--ref-max-side", type=int, default=512, help="max side for reference_latents VAE encode (default: 512)")
-    ap.add_argument("--unchained-lora", type=float, default=0.72, help="strength for Unchained-XXX.safetensors NSFW LoRA")
-    ap.add_argument("--nsfw-lora", type=float, default=0.80, help="strength for qwen_nsfw_adv.safetensors LoKr")
+    ap.add_argument("--unchained-lora", type=float, default=0.50, help="strength for Unchained-XXX.safetensors LoRA")
+    ap.add_argument("--nsfw-lora", type=float, default=0.45, help="strength for qwen_nsfw_adv.safetensors LoKr")
     ap.add_argument("--anima-refine", action="store_true", help="run Stage 1B: DWPose pelvis mask + Anima Base masked inpaint (rest of image untouched)")
     ap.add_argument("--anima-denoise", type=float, default=0.70, help="denoise strength inside the pelvis mask")
     ap.add_argument("--mask-size", type=float, default=1.4, help="AsepritePoseRegionMask size (pelvis region scale)")
@@ -154,15 +154,23 @@ def main():
         wf["6"] = {"class_type": "LoadImage", "inputs": {"image": pose}}
         cond_inputs["image2"] = ["6", 0]
     if args.anima_refine:
+        is_petite = True if not card else any(k in str(card).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
         anima_pos = (card.get("anima_nsfw_tags") or card.get("anima_tags") or "") if card else ""
         anima_pos = f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, 1girl, nsfw, bottomless, no panties, pussy, uncensored, {anima_pos}".strip(" ,")
         if pose_meta and pose_meta.get("anima_pose_tags"):
             anima_pos = f"{anima_pos}, {pose_meta['anima_pose_tags']}".strip(" ,")
+        if is_petite:
+            import re
+            anima_pos = re.sub(r"\b(hanging breasts|large breasts|huge breasts|cleavage)\b\s*,?", "", anima_pos, flags=re.IGNORECASE)
+            anima_pos = f"{anima_pos}, small breasts, flat chest, slender, narrow hips, pink nipples".strip(" ,")
         anima_neg = (card.get("negative_tags") or "panties, underwear, shorts, bra") if card else "panties, underwear, shorts, bra"
+        if is_petite:
+            anima_neg = f"{anima_neg}, large breasts, huge breasts, hanging breasts, cleavage, wide hips, voluptuous, curvy, thick thighs"
+        has_chest_refine = any(k in args.phase.lower() for k in ("breast", "nipple", "chest", "topless", "nude", "胸", "乳", "赤裸", "全裸", "贫乳", "平胸"))
         wf["11m"] = {"class_type": "UNETLoader", "inputs": {"unet_name": "anima-base-v1.0.safetensors", "weight_dtype": "default"}}
         wf["11c"] = {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen_3_06b_base.safetensors", "type": "stable_diffusion", "device": "default"}}
         wf["11d"] = {"class_type": "DWPreprocessor", "inputs": {"image": ["11", 0], "detect_hand": "disable", "detect_body": "enable", "detect_face": "disable", "resolution": 512, "bbox_detector": "None", "pose_estimator": "dw-ll_ucoco_384.onnx", "scale_stick_for_xinsr_cn": "disable"}}
-        wf["11k"] = {"class_type": "AsepritePoseRegionMask", "inputs": {"pose_kps": ["11d", 1], "pelvis": True, "chest": False, "size": args.mask_size, "feather": 8}}
+        wf["11k"] = {"class_type": "AsepritePoseRegionMask", "inputs": {"pose_kps": ["11d", 1], "pelvis": True, "chest": has_chest_refine, "size": args.mask_size, "feather": 8, "hands": False}}
         wf["11p"] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["11c", 0], "text": anima_pos}}
         wf["11n"] = {"class_type": "CLIPTextEncode", "inputs": {"clip": ["11c", 0], "text": f"{anima_neg}, shorts, denim shorts, panties, underwear, lingerie, briefs, censored"}}
         wf["11e"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["11", 0], "vae": ["4", 0]}}
