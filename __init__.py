@@ -46,10 +46,13 @@ DEFAULT_SYSTEM_PROMPT = """你是一个专精于 Anima (Danbooru Tag 图像模�
 角色固定外观与服装标签已预置为宏 `{{CHARCARD_ANIMA_TAGS}}`，固定负面冲突词已预置为宏 `{{CHARCARD_NEG_TAGS}}`，角色英文主语已预置为宏 `{{CHARCARD_WAN_SUBJECT}}`。
 
 【体型与服装一致性红线（严禁 OOC，精炼去重）】：
-1. 角色体型一致性：严格维护角色原设身材！若角色为平胸/娇小身材（如 Shinozaki Hiro），正面提示词严禁出现任何大胸描述，负面词必须包含 `large breasts, huge breasts`，绝不可被 NSFW LoRA 误导变异为巨乳！
-2. 精准脱衣：若用户仅要求“下身不穿裤子/下装暴露”，只脱下半身（bottomless, no panties, bare legs），上衣保持原样；严禁在用户未明确要求脱上衣时擅自添加 topless 或 exposed breasts！
-3. 严禁冗余堆叠：去除所有重复出现的 tag，保持提示词精炼、聚焦。
-
+1. 角色体型一致性：严格维护角色原设身材！若角色为平胸/娇小身材（如 Shinozaki Hiro），正面提示词严禁出现任何大胸描述，负面词必须包含 `large breasts, huge breasts, hanging breasts, cleavage, wide hips`，绝不可被 NSFW LoRA 误导变异为巨乳/肥臀！
+2. 正向关键词「精简而有效」法则（注意力预算最大化，防肢体崩坏）：
+   - 强锁定（硬核识别特征）：只保留最核心的 5-8 个不可替代特征（发色、发长、刘海、标志性兽耳/角/尾巴、瞳色、核心发饰），用权重括号前置（如 (cat ears:1.2), (horns:1.2)）；
+   - 彻底剥离战术配件与装备垃圾：在进行脱衣/下身暴露/做动作时，严禁把原图立绘里繁复的战术背带(harness)、腰包(pouch)、手套(gloves)、过膝袜(thighhighs)、战术长靴(combat boots)、护膝(knee pads)、电锯/法杖/武器等配件词塞入正向词！这些琐碎配件会极度稀释扩散模型的注意力预算，导致四肢与装备相互缠结撕裂、M腿等大动作彻底崩溃；
+   - 下半身极简纯净：涉及下身脱除或裸露时，下半身只保留极简的 `bottomless, no panties, bare legs, bare pussy`，让模型将全部注意力集中于解剖学透视与动作骨骼！
+3. 精准脱衣：若用户仅要求“下身不穿裤子/下装暴露”，只脱下半身（bottomless, no panties, bare legs），上衣保持原样；严禁在用户未明确要求脱上衣时擅自添加 topless 或 exposed breasts！
+4. 严禁冗余堆叠：去除所有重复出现的 tag，正面词总词条数量严格控制在 30 个以内，保持提示词绝对精炼、高效、聚焦。
 请根据用户输入的【中文姿势与动作描述】，严格以 JSON 格式输出以下 4 个字段（保留宏名原样输出）：
 {
   "anima_positive": "masterpiece, best quality, score_9, score_8, newest, {{CHARCARD_ANIMA_TAGS}}, <精确姿势与视角标签，精炼无重复>, full body, white background, simple background",
@@ -1291,7 +1294,8 @@ class AsepriteLLMPromptDirector:
             sys_text = (
                 "你是一个专精于二次元角色立绘 (Danbooru Tag) 与图生视频动画 (Wan2.2 I2V) 的多模态视觉提示词编译器。\n"
                 "用户上传了一张【角色参考图】并给出了【中文姿势与动作要求】。\n"
-                "请观察参考图中的角色，提取她的全部标志性外观特征（1girl, solo, 发色, 发长, 发型, 刘海形状, 发饰/发卡/蝴蝶结/眼镜/项圈等配饰, 瞳色, 身材特征, 以及保留的服饰颜色与款式），"
+                "请观察参考图中的角色，提取她最核心的标志性外观特征（1girl, solo, 发色, 发长, 发型, 标志性兽耳/角/尾巴, 核心发饰/发卡, 瞳色, 身材特征，以及极简的保留服饰颜色款式）。\n"
+                "【正向关键词精简而有效原则（防肢体崩坏）】：在进行脱衣、暴露或姿势变换时，严禁提取原立绘里繁复的战术背带、腰包、过膝袜、战斗靴、手套、护膝或武器！正面关键词必须精简聚焦在面容、发型与动作（控制在 30 词以内），避免注意力分散导致肢体变形！\n"
                 "然后结合用户的中文姿势、表情与动作描述，严格输出以下 JSON 格式（不要输出任何额外解释）：\n"
                 "{\n"
                 '  "char_appearance_tags": "1girl, solo, <从参考图提取的完整Danbooru角色外观、发型发色、瞳色、发饰与服饰英文标签>",\n'

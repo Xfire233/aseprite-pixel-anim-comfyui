@@ -155,7 +155,20 @@ def main():
         cond_inputs["image2"] = ["6", 0]
     if args.anima_refine:
         is_petite = True if not card else any(k in str(card).lower() for k in ("small breasts", "flat chest", "slender", "petite", "hiro"))
-        anima_pos = (card.get("anima_nsfw_tags") or card.get("anima_tags") or "") if card else ""
+        if card:
+            anima_pos = card.get("anima_nsfw_tags") or card.get("anima_tags") or ""
+        else:
+            anima_pos = ""
+            try:
+                from scripts.extract_charcard import run_local_wd14
+                ref_p = os.path.join(COMFY, "input", ref) if not os.path.isabs(ref) else ref
+                if os.path.exists(ref_p):
+                    wd_info = run_local_wd14(Image.open(ref_p).convert("RGB"))
+                    id_t = wd_info.get("identity_tags", [])
+                    if id_t:
+                        anima_pos = ", ".join(id_t[:15])
+            except Exception as e:
+                print(f"[gen.py] Local WD14 hint: {e}")
         anima_pos = f"masterpiece, best quality, score_9, score_8, newest, 2d, cel shading, clean lineart, 1girl, nsfw, bottomless, no panties, pussy, uncensored, {anima_pos}".strip(" ,")
         if pose_meta and pose_meta.get("anima_pose_tags"):
             anima_pos = f"{anima_pos}, {pose_meta['anima_pose_tags']}".strip(" ,")
